@@ -76,6 +76,17 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 device_name = get_device_name()
 
+_LOG_PROB_BATCH_KEYS = ["responses", "input_ids", "attention_mask", "position_ids"]
+
+
+def _select_log_prob_data(data: DataProto) -> DataProto:
+    non_tensor_batch = data.non_tensor_batch or {}
+    non_tensor_batch_keys = ["multi_modal_inputs"] if "multi_modal_inputs" in non_tensor_batch else []
+    return data.select(
+        batch_keys=_LOG_PROB_BATCH_KEYS,
+        non_tensor_batch_keys=non_tensor_batch_keys,
+    )
+
 
 def create_device_mesh(world_size, fsdp_size):
     if fsdp_size < 0 or fsdp_size >= world_size:
@@ -711,6 +722,7 @@ class ActorRolloutRefWorker(Worker):
         from contextlib import nullcontext
         is_lora = data.meta_info.pop("is_lora", False)
         adapter_ctx = self.actor.actor_module.disable_adapter() if is_lora else nullcontext()
+        data = _select_log_prob_data(data)
         data = data.to(get_torch_device().current_device())
         # we should always recompute old_log_probs when it is HybridEngine
         data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
@@ -754,6 +766,7 @@ class ActorRolloutRefWorker(Worker):
         # else:
         # otherwise, the class have a standalone ref model
         # Support all hardwares
+        data = _select_log_prob_data(data)
         data = data.to(get_torch_device().current_device())
 
         micro_batch_size = self.config.ref.log_prob_micro_batch_size_per_gpu
