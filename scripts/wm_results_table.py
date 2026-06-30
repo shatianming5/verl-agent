@@ -21,6 +21,7 @@ from typing import Any
 DEFAULT_WORK = "/mnt/cephfs_home_tianming.sha/grpo_alfworld"
 DEFAULT_EVAL_SCRIPT = "/root/grpo/eval10x_alfworld.sh"
 DEFAULT_TRAIN_SCRIPT = "/root/grpo/run_seed_alfworld_official.sh"
+DEFAULT_DIAGNOSTIC_SCRIPT = "scripts/run_wm_checkpoint_diagnostics.sh"
 RUN_PREFIX_RE = re.compile(r"grpo_qwen2\.5_1\.5b_alfworld_(.+?)(?:_\d{8}_\d{6})?(?:\.log)?$")
 GOAL_RD_EXPECTED_RUNS = [
     "grpo_baseline_s0:objective=grpo_baseline,seed=0,tag=official_4to5",
@@ -78,6 +79,8 @@ CSV_COLUMNS = [
     "diagnostic_report_csv_path",
     "diagnostic_report_svg_path",
     "diagnostic_summary_path",
+    "diagnostic_transition_jsonl",
+    "diagnostic_checkpoint_root",
     "diagnostic_command",
     "diagnostic_model_path",
     "diagnostic_output_csv_path",
@@ -155,6 +158,21 @@ def parse_args() -> argparse.Namespace:
         "--eval-script",
         default=DEFAULT_EVAL_SCRIPT,
         help="Eval script path to use in generated eval commands.",
+    )
+    parser.add_argument(
+        "--diagnostic-script",
+        default=DEFAULT_DIAGNOSTIC_SCRIPT,
+        help="Checkpoint diagnostic script path to use in generated diagnostic commands.",
+    )
+    parser.add_argument(
+        "--diagnostic-steps",
+        default="init 30 60 90 120 150",
+        help="STEPS value to use in generated diagnostic commands.",
+    )
+    parser.add_argument(
+        "--diagnostic-transition-step",
+        default="150",
+        help="Transition dump step to use when inferring TRANSITIONS_JSONL for generated diagnostic commands.",
     )
     parser.add_argument(
         "--expected-run",
@@ -665,6 +683,12 @@ def append_unique(existing: Any, value: Any) -> str:
     return ";".join(parts)
 
 
+def first_path(value: Any) -> str:
+    if value in ("", None):
+        return ""
+    return str(value).split(";", 1)[0]
+
+
 def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> None:
     run_key = str(row.get("run_key") or "unknown")
     record = records.setdefault(run_key, empty_record(run_key))
@@ -753,6 +777,82 @@ def build_train_command(row: dict[str, Any], train_cuda: str, train_script: str)
     return f"{prefix} bash {shlex.quote(train_script)} {shlex.quote(seed)}"
 
 
+def checkpoint_path_from_row(row: dict[str, Any]) -> str:
+    for key in ("latest_checkpoint_path", "eval_target_checkpoint_path", "eval_checkpoint_path"):
+        checkpoint_path = first_path(row.get(key))
+        if checkpoint_path:
+            return checkpoint_path
+    return ""
+
+
+def checkpoint_step_from_path(path: str) -> int | None:
+    match = re.search(r"(?:^|/)global_step_(\d+)(?:/|$)", path)
+    return int(match.group(1)) if match else None
+
+
+def checkpoint_root_from_row(row: dict[str, Any]) -> str:
+    checkpoint_path = checkpoint_path_from_row(row)
+    if not checkpoint_path:
+        return ""
+    path = Path(checkpoint_path)
+    if re.fullmatch(r"global_step_\d+", path.name):
+        return str(path.parent)
+    return checkpoint_path
+
+
+def has_diagnostic_target_checkpoint(row: dict[str, Any], transition_step: str) -> bool:
+    checkpoint_root = checkpoint_root_from_row(row)
+    if not checkpoint_root:
+        return False
+    target_step = coerce_int(transition_step)
+    if target_step is None:
+        return True
+    for key in ("latest_checkpoint_path", "eval_target_checkpoint_path", "eval_checkpoint_path"):
+        checkpoint_step = checkpoint_step_from_path(first_path(row.get(key)))
+        if checkpoint_step is not None and checkpoint_step >= target_step:
+            return True
+    latest_step = coerce_int(row.get("latest_checkpoint_step"))
+    return latest_step is not None and latest_step >= target_step
+
+
+def transition_jsonl_from_row(row: dict[str, Any], work_root: str, transition_step: str) -> str:
+    rollout_data_dir = first_path(row.get("rollout_data_dir"))
+    if rollout_data_dir:
+        return str(Path(rollout_data_dir) / f"{transition_step}.wm_transitions.jsonl")
+
+    checkpoint_root = checkpoint_root_from_row(row)
+    if not checkpoint_root:
+        return ""
+    experiment_name = Path(checkpoint_root).name
+    if not experiment_name:
+        return ""
+    return str(Path(work_root) / "logs" / "world_model_rollouts" / experiment_name / f"{transition_step}.wm_transitions.jsonl")
+
+
+def build_diagnostic_command(
+    row: dict[str, Any],
+    work_root: str,
+    diagnostic_script: str,
+    diagnostic_steps: str,
+    transition_step: str,
+) -> str:
+    if not has_diagnostic_target_checkpoint(row, transition_step=transition_step):
+        return ""
+    checkpoint_root = checkpoint_root_from_row(row)
+    transition_jsonl = transition_jsonl_from_row(row, work_root=work_root, transition_step=transition_step)
+    if not checkpoint_root or not transition_jsonl:
+        return ""
+
+    assignments = {
+        "TRANSITIONS_JSONL": transition_jsonl,
+        "CKPT_ROOT": checkpoint_root,
+        "TAG": str(row.get("tag") or row.get("run_key") or "wm_checkpoint_diagnostics"),
+        "STEPS": diagnostic_steps,
+    }
+    prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in assignments.items())
+    return f"{prefix} bash {shlex.quote(diagnostic_script)}"
+
+
 def annotate_train_commands(rows: list[dict[str, Any]], train_cuda: str, train_script: str) -> None:
     for row in rows:
         if row.get("train_command"):
@@ -786,6 +886,33 @@ def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: 
         else:
             row["eval_readiness"] = "missing_training_log"
             row["eval_command"] = ""
+
+
+def annotate_diagnostic_commands(
+    rows: list[dict[str, Any]],
+    work_root: str,
+    diagnostic_script: str,
+    diagnostic_steps: str,
+    transition_step: str,
+) -> None:
+    for row in rows:
+        if row.get("diagnostic_command") or row.get("diagnostic_summary_path"):
+            continue
+        if not has_diagnostic_target_checkpoint(row, transition_step=transition_step):
+            continue
+        checkpoint_root = checkpoint_root_from_row(row)
+        transition_jsonl = transition_jsonl_from_row(row, work_root=work_root, transition_step=transition_step)
+        if not checkpoint_root or not transition_jsonl:
+            continue
+        row["diagnostic_checkpoint_root"] = checkpoint_root
+        row["diagnostic_transition_jsonl"] = transition_jsonl
+        row["diagnostic_command"] = build_diagnostic_command(
+            row,
+            work_root=work_root,
+            diagnostic_script=diagnostic_script,
+            diagnostic_steps=diagnostic_steps,
+            transition_step=transition_step,
+        )
 
 
 def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
@@ -994,6 +1121,9 @@ def build_report_generation_metadata(
         ("Eval CUDA", str(args.eval_cuda)),
         ("Eval n", str(args.eval_n)),
         ("Eval script", str(args.eval_script)),
+        ("Diagnostic script", str(args.diagnostic_script)),
+        ("Diagnostic steps", str(args.diagnostic_steps)),
+        ("Diagnostic transition step", str(args.diagnostic_transition_step)),
     ]
 
 
@@ -1118,6 +1248,22 @@ def render_markdown(
                 lines.append(f"- `{row.get('run_key', '')}` checkpoint `{target}`: `{row['eval_command']}`")
         lines.append("")
 
+    diagnostic_command_rows = [
+        row
+        for row in rows
+        if row.get("diagnostic_command") and not row.get("diagnostic_summary_path")
+    ]
+    if diagnostic_command_rows:
+        lines.append("## Diagnostic Commands")
+        lines.append("")
+        for row in diagnostic_command_rows:
+            transition_jsonl = str(row.get("diagnostic_transition_jsonl") or "")
+            checkpoint_root = str(row.get("diagnostic_checkpoint_root") or "")
+            lines.append(
+                f"- `{row.get('run_key', '')}` transitions `{transition_jsonl}` checkpoint root `{checkpoint_root}`: `{row['diagnostic_command']}`"
+            )
+        lines.append("")
+
     expected_rows = [row for row in rows if row.get("expected") == "yes"]
     if expected_rows:
         lines.append("## Expected Run Coverage")
@@ -1154,6 +1300,8 @@ def render_markdown(
             ("diagnostic_report_csv_path", "Diagnostic report CSV"),
             ("diagnostic_report_svg_path", "Diagnostic report SVG"),
             ("diagnostic_summary_path", "Diagnostic summary"),
+            ("diagnostic_transition_jsonl", "Diagnostic transitions"),
+            ("diagnostic_checkpoint_root", "Diagnostic checkpoint root"),
             ("diagnostic_output_csv_path", "Diagnostic CSV"),
             ("train_log_path", "Train log"),
         ):
@@ -1223,6 +1371,13 @@ def main() -> None:
     rows = build_records(eval_paths, train_logs, diagnostic_paths, expected_runs=expected_runs)
     annotate_train_commands(rows, train_cuda=args.train_cuda, train_script=args.train_script)
     annotate_eval_readiness(rows, eval_cuda=args.eval_cuda, eval_n=args.eval_n, eval_script=args.eval_script)
+    annotate_diagnostic_commands(
+        rows,
+        work_root=args.work_root,
+        diagnostic_script=args.diagnostic_script,
+        diagnostic_steps=args.diagnostic_steps,
+        transition_step=args.diagnostic_transition_step,
+    )
     annotate_artifact_coverage(rows)
     branch = args.branch if args.branch is not None else git_branch()
     report_generation = build_report_generation_metadata(args, eval_paths, train_logs, diagnostic_paths, expected_runs)
