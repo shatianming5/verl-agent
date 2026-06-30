@@ -10,6 +10,7 @@ def test_world_model_artifact_mirror_has_goal_rd_rows_and_diagnostics():
     results_csv = artifact_root / "world_model_results.csv"
     diagnostic_csv = (
         artifact_root
+        / "world_model_diagnostics"
         / "wm_ckpt_diag_seed0_official_full_20260628"
         / "checkpoint_diagnostics_report.csv"
     )
