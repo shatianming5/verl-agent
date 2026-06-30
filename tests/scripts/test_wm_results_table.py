@@ -144,6 +144,42 @@ def test_parse_train_log_handles_live_tqdm_step_lines(tmp_path):
     assert row["wm_metric_last"] == "latent_loss=0.257, cosine=0.743"
 
 
+def test_obs_ce_l_token_is_not_misclassified_by_disabled_latent_config(tmp_path):
+    module = _load_module()
+    log_path = tmp_path / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p03_s0_20260630_010203.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "RUN_WM_OBS_CE_SEED seed=0 tag=wm_obs_ce_l0p03_s0 cuda=2,3 lambda_obs=0.03 total_epochs=150",
+                "RUN_ALFWORLD_OFFICIAL seed=0 tag=wm_obs_ce_l0p03_s0 cuda=2,3 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p03_s0",
+                "actor_rollout_ref.actor.world_model.obs_ce_enable=True",
+                "actor_rollout_ref.actor.world_model.lambda_obs=0.03",
+                "actor_rollout_ref.actor.world_model.latent_enable=False",
+                "Training Progress:   0%|          | 0/150 [00:00<?, ?it/s]",
+                "step:0 - val/success_rate:0.078 - training/global_step:0.000",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    rows = module.build_records(
+        eval_paths=[],
+        train_logs=[str(log_path)],
+        diagnostic_paths=[],
+        expected_runs=module.GOAL_RD_EXPECTED_RUNS,
+    )
+    module.annotate_artifact_coverage(rows)
+    by_key = {row["run_key"]: row for row in rows}
+
+    assert len(rows) == 11
+    assert "latent_l0p03_s0" not in by_key
+    row = by_key["obs_ce_l0p03_s0"]
+    assert row["objective"] == "obs_ce"
+    assert row["lambda_obs"] == "0.03"
+    assert row["lambda_latent"] == ""
+    assert row["has_train_log"] == "yes"
+
+
 def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
     module = _load_module()
     ready = {

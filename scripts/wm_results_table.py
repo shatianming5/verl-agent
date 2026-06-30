@@ -407,6 +407,7 @@ def method_from_objective(objective: str) -> str:
 
 
 def infer_metadata(fragment: str, text: str = "") -> dict[str, str]:
+    normalized_fragment = normalize_fragment(fragment)
     combined = normalize_fragment(f"{fragment} {text}")
     seed = infer_seed(combined)
     lambda_obs = infer_lambda(combined, ("actor_rollout_ref.actor.world_model.lambda_obs", "lambda_obs", "obs_ce_coef"))
@@ -414,11 +415,11 @@ def infer_metadata(fragment: str, text: str = "") -> dict[str, str]:
         combined,
         ("actor_rollout_ref.actor.world_model.lambda_latent", "lambda_latent", "latent_loss_coef"),
     )
-    lowered = combined.lower()
-    if not lambda_obs and any(token in lowered for token in ("obs_ce", "wm_obs", "lambda_obs")):
-        lambda_obs = infer_l_token(combined)
-    if not lambda_latent and any(token in lowered for token in ("wmlat", "latent", "lambda_latent")):
-        lambda_latent = infer_l_token(combined)
+    fragment_lowered = normalized_fragment.lower()
+    if not lambda_obs and any(token in fragment_lowered for token in ("obs_ce", "wm_obs")):
+        lambda_obs = infer_l_token(normalized_fragment)
+    if not lambda_latent and any(token in fragment_lowered for token in ("wmlat", "latent")):
+        lambda_latent = infer_l_token(normalized_fragment)
     objective = infer_objective(combined, lambda_obs=lambda_obs, lambda_latent=lambda_latent)
 
     parts = [objective]
