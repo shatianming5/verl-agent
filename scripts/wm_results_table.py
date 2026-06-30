@@ -1598,18 +1598,42 @@ def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, la
 
 def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
     diagnostic_rows = [row for row in rows if row_has_diagnostic(row)]
-    gap_rows = [
-        row
-        for row in diagnostic_rows
-        if row.get("diagnostic_success_failure_ce_gap") not in ("", None)
-        or row.get("diagnostic_success_failure_cosine_gap") not in ("", None)
-    ]
     if not diagnostic_rows:
         return "Observation prediction features: pending; no checkpoint diagnostic summaries yet."
-    if gap_rows:
+
+    ce_gaps = [
+        value
+        for row in diagnostic_rows
+        for value in [coerce_float(row.get("diagnostic_success_failure_ce_gap"))]
+        if value is not None
+    ]
+    cosine_gaps = [
+        value
+        for row in diagnostic_rows
+        for value in [coerce_float(row.get("diagnostic_success_failure_cosine_gap"))]
+        if value is not None
+    ]
+    if ce_gaps or cosine_gaps:
+        parts = []
+        if ce_gaps:
+            parts.append(
+                "failure-success CE gap mean "
+                f"{average(ce_gaps):+.4f} across {len(ce_gaps)} run(s) "
+                f"({sum(1 for value in ce_gaps if value > 0)} positive, "
+                f"{sum(1 for value in ce_gaps if value < 0)} negative)"
+            )
+        if cosine_gaps:
+            parts.append(
+                "success-failure cosine gap mean "
+                f"{average(cosine_gaps):+.4f} across {len(cosine_gaps)} run(s) "
+                f"({sum(1 for value in cosine_gaps if value > 0)} positive, "
+                f"{sum(1 for value in cosine_gaps if value < 0)} negative)"
+            )
         return (
-            "Observation prediction features: evidence available; success/failure CE or "
-            f"cosine gaps are reported for {len(gap_rows)} diagnostic run(s)."
+            "Observation prediction features: success/failure separation is quantified; "
+            + "; ".join(parts)
+            + ". Positive CE gap means failure trajectories have higher CE than success trajectories; "
+            "positive cosine gap means success trajectories have higher action-observation cosine."
         )
     return (
         "Observation prediction features: partial evidence available; checkpoint diagnostics exist, "
@@ -1618,15 +1642,43 @@ def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
 
 
 def latent_interpretation(rows: list[dict[str, Any]]) -> str:
-    latent_eval_count = len(objective_eval_values(rows, "latent"))
-    latent_diagnostic_count = sum(1 for row in rows if str(row.get("objective") or "") == "latent" and row_has_diagnostic(row))
-    if latent_eval_count == 0:
+    baseline_values = objective_eval_values(rows, "grpo_baseline")
+    latent_values = objective_eval_values(rows, "latent")
+    if not latent_values:
         return "Latent alignment: pending; no latent eval10x result is available yet."
-    if latent_diagnostic_count == 0:
+    latent_diagnostic_rows = [row for row in rows if str(row.get("objective") or "") == "latent" and row_has_diagnostic(row)]
+    if not latent_diagnostic_rows:
         return "Latent alignment: eval evidence exists, but latent checkpoint diagnostics are still pending."
+    baseline_mean = average(baseline_values)
+    latent_mean = average(latent_values)
+    eval_part = f"evaluated latent runs={len(latent_values)}"
+    if baseline_mean is not None and latent_mean is not None:
+        eval_part = f"mean eval {latent_mean:.4f} vs baseline {baseline_mean:.4f}, delta {latent_mean - baseline_mean:+.4f}"
+    ce_deltas = [
+        value
+        for row in latent_diagnostic_rows
+        for value in [coerce_float(row.get("diagnostic_delta_token_mean_ce"))]
+        if value is not None
+    ]
+    cosine_deltas = [
+        value
+        for row in latent_diagnostic_rows
+        for value in [coerce_float(row.get("diagnostic_delta_action_obs_cosine"))]
+        if value is not None
+    ]
+    diagnostic_parts = []
+    if ce_deltas:
+        diagnostic_parts.append(f"CE delta mean {average(ce_deltas):+.4f}")
+    if cosine_deltas:
+        diagnostic_parts.append(f"cosine delta mean {average(cosine_deltas):+.4f}")
+    diagnostic_part = (
+        f"{'; '.join(diagnostic_parts)} across {len(latent_diagnostic_rows)} latent diagnostic run(s)"
+        if diagnostic_parts
+        else f"{len(latent_diagnostic_rows)} latent diagnostic run(s)"
+    )
     return (
-        "Latent alignment: eval and diagnostic evidence are available; compare latent rows "
-        "against raw CE and baseline in the result summary."
+        f"Latent alignment: eval and diagnostic evidence are available; {eval_part}; "
+        f"{diagnostic_part}."
     )
 
 

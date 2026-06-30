@@ -662,7 +662,9 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
     assert status["Result table status"].startswith("2/3 tracked run(s) have eval results")
     assert "waiting_for_checkpoint" in status["Result table status"]
     assert "Raw observation CE: positive so far" in status["Raw observation CE interpretation"]
-    assert "evidence available" in status["World-model feature interpretation"]
+    assert "failure-success CE gap mean +0.2000 across 1 run(s) (1 positive, 0 negative)" in status[
+        "World-model feature interpretation"
+    ]
     assert status["Latent alignment interpretation"] == "Latent alignment: pending; no latent eval10x result is available yet."
 
     markdown = module.render_markdown(rows, branch="world-model-latent-objective")
@@ -674,6 +676,32 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
     assert "- Training log coverage: `2/3 tracked run(s) have training logs`" in markdown
     assert "| latent_s0 |" in markdown
     assert "| latent | latent |  |  | 1 | 1 | 0 | 0.9900 |" not in markdown
+
+
+def test_latent_interpretation_summarizes_eval_and_diagnostic_deltas():
+    module = _load_module()
+    rows = [
+        {"run_key": "grpo_baseline_s0", "objective": "grpo_baseline", "eval_mean": 0.70},
+        {"run_key": "grpo_baseline_s1", "objective": "grpo_baseline", "eval_mean": 0.72},
+        {
+            "run_key": "latent_l0p001_s0",
+            "objective": "latent",
+            "eval_mean": 0.66,
+            "diagnostic_summary_path": "/work/logs/world_model_diagnostics/wmlat/checkpoint_scores_summary.json",
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.42,
+            "diagnostic_delta_token_mean_ce": -0.01,
+            "diagnostic_action_obs_cosine": 0.14,
+            "diagnostic_delta_action_obs_cosine": -0.04,
+            "diagnostic_target_tokens": 20,
+        },
+    ]
+
+    interpretation = module.latent_interpretation(rows)
+
+    assert "mean eval 0.6600 vs baseline 0.7100, delta -0.0500" in interpretation
+    assert "CE delta mean -0.0100" in interpretation
+    assert "cosine delta mean -0.0400" in interpretation
 
 
 def test_expected_run_coverage_reports_missing_artifacts():
