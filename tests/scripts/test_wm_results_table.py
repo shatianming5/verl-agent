@@ -146,6 +146,16 @@ def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
     assert evaluated["eval_readiness"] == "evaluated"
     assert evaluated["eval_command"] == ""
 
+    markdown = module.render_markdown(rows)
+    assert "## Eval Readiness" in markdown
+    assert "- ready_for_eval: `1`" in markdown
+    assert "- waiting_for_checkpoint: `1`" in markdown
+    assert "- evaluated: `1`" in markdown
+    assert "Ready eval commands:" in markdown
+    assert "latent_l0p001_s1" in markdown
+    assert "CUDA_VISIBLE_DEVICES=4,5" in markdown
+    assert "CKPT=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150" in markdown
+
 
 def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     module = _load_module()

@@ -13,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -715,6 +716,21 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
                 cells.append(str(row.get(key, "")))
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
+
+    readiness_counts = Counter(str(row.get("eval_readiness") or "unknown") for row in rows)
+    if readiness_counts:
+        lines.append("## Eval Readiness")
+        lines.append("")
+        for readiness, count in sorted(readiness_counts.items()):
+            lines.append(f"- {readiness}: `{count}`")
+        ready_rows = [row for row in rows if row.get("eval_readiness") == "ready_for_eval" and row.get("eval_command")]
+        if ready_rows:
+            lines.append("")
+            lines.append("Ready eval commands:")
+            lines.append("")
+            for row in ready_rows:
+                lines.append(f"- `{row.get('run_key', '')}`: `{row['eval_command']}`")
+        lines.append("")
 
     lines.append("## Artifact Paths")
     lines.append("")
