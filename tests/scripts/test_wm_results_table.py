@@ -362,6 +362,9 @@ def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for
             "tag": "wm_obs_ce_l0p03_s0",
             "latest_checkpoint_path": str(work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p03_s0" / "global_step_150"),
             "diagnostic_summary_path": "/work/logs/world_model_diagnostics/wm_obs_ce_l0p03_s0/checkpoint_scores_summary.json",
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.4,
+            "diagnostic_action_obs_cosine": 0.4,
             "diagnostic_command": "python existing.py",
         },
         {
@@ -408,6 +411,9 @@ def test_objective_coverage_summarizes_eval_and_diagnostics():
             "seed": "0",
             "eval_readiness": "evaluated",
             "diagnostic_summary_path": "/work/diag/base.json",
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.5,
+            "diagnostic_action_obs_cosine": 0.3,
         },
         {
             "run_key": "obs_ce_l0p01_s0",
@@ -426,7 +432,9 @@ def test_objective_coverage_summarizes_eval_and_diagnostics():
             "objective": "latent",
             "seed": "1",
             "eval_readiness": "eval_incomplete",
+            "diagnostic_final_step": "150",
             "diagnostic_token_mean_ce": 1.4,
+            "diagnostic_action_obs_cosine": 0.4,
         },
     ]
 
@@ -492,6 +500,9 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "eval_readiness": "evaluated",
             "diagnostic_readiness": "diagnosed",
             "diagnostic_summary_path": "/work/logs/world_model_diagnostics/base/checkpoint_scores_summary.json",
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.5,
+            "diagnostic_action_obs_cosine": 0.3,
         },
         {
             "run_key": "obs_ce_l0p01_s0",
@@ -503,7 +514,9 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "train_log_path": "/work/logs/obs.log",
             "eval_readiness": "evaluated",
             "diagnostic_readiness": "diagnosed",
+            "diagnostic_final_step": "150",
             "diagnostic_token_mean_ce": 1.4,
+            "diagnostic_action_obs_cosine": 0.4,
             "diagnostic_success_failure_ce_gap": 0.2,
         },
         {
@@ -979,6 +992,91 @@ def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path)
     assert row["has_diagnostic"] == "yes"
     assert row["missing_artifacts"] == "diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
     assert row["final_report_readiness"] == "missing:diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
+
+
+def test_incomplete_diagnostic_summary_does_not_count_as_complete(tmp_path):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    checkpoint_root = work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0"
+    rollout_dir = work_root / "logs" / "world_model_rollouts" / checkpoint_root.name
+    rollout_dir.mkdir(parents=True)
+    transition_jsonl = rollout_dir / "150.wm_transitions.jsonl"
+    transition_jsonl.write_text('{"ok": true}\n', encoding="utf-8")
+
+    summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
+    summary_dir.mkdir()
+    summary_path = summary_dir / "checkpoint_scores_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "transition_jsonl": str(transition_jsonl),
+                "checkpoints": [
+                    {
+                        "checkpoint_label": "init",
+                        "checkpoint_step": "init",
+                        "token_mean_ce": 2.0,
+                        "row_mean_action_obs_cosine": 0.10,
+                        "rows_with_targets": 2,
+                        "target_tokens": 20,
+                    },
+                    {
+                        "checkpoint_label": "step60",
+                        "checkpoint_step": "60",
+                        "checkpoint_path": str(checkpoint_root / "global_step_60"),
+                        "token_mean_ce": 1.7,
+                        "row_mean_action_obs_cosine": 0.20,
+                        "rows_with_targets": 2,
+                        "target_tokens": 20,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    row = module.parse_diagnostic_summary(str(summary_path))
+    row.update(
+        {
+            "expected": "yes",
+            "train_log_path": "/work/logs/train.log",
+            "eval_mean": 0.72,
+            "tag": "wm_obs_ce_l0p01_s0",
+            "latest_checkpoint_step": 150,
+            "latest_checkpoint_path": str(checkpoint_root / "global_step_150"),
+        }
+    )
+
+    assert row["diagnostic_final_step"] == "60"
+    assert row["status"] == "diagnostic_incomplete"
+    assert not module.row_has_diagnostic(row)
+
+    module.annotate_diagnostic_commands(
+        [row],
+        work_root=str(work_root),
+        diagnostic_script="scripts/run_wm_checkpoint_diagnostics.sh",
+        diagnostic_steps="init 60 120 150",
+        transition_step="150",
+    )
+    module.annotate_artifact_coverage([row])
+
+    assert row["diagnostic_readiness"] == "ready_for_diagnostic"
+    assert "run_wm_checkpoint_diagnostics.sh" in row["diagnostic_command"]
+    assert row["has_diagnostic"] == "no"
+    assert row["missing_artifacts"] == "diagnostic"
+    assert row["final_report_readiness"] == "missing:diagnostic"
+
+
+def test_zero_token_or_missing_cosine_diagnostic_is_incomplete():
+    module = _load_module()
+    base = {
+        "diagnostic_summary_path": "/work/diag/checkpoint_scores_summary.json",
+        "diagnostic_final_step": "150",
+        "diagnostic_token_mean_ce": 1.4,
+    }
+
+    assert not module.row_has_diagnostic(base | {"diagnostic_action_obs_cosine": 0.3, "diagnostic_target_tokens": 0})
+    assert not module.row_has_diagnostic(base | {"diagnostic_target_tokens": 20})
+    assert module.row_has_diagnostic(base | {"diagnostic_action_obs_cosine": 0.0, "diagnostic_target_tokens": 20})
 
 
 def test_expand_paths_expands_explicit_glob_paths(tmp_path):

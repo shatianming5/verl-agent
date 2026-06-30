@@ -71,6 +71,8 @@ CSV_COLUMNS = [
     "diagnostic_success_failure_ce_gap",
     "diagnostic_success_failure_cosine_gap",
     "diagnostic_rows",
+    "diagnostic_rows_with_targets",
+    "diagnostic_target_tokens",
     "diagnostic_init_ce",
     "diagnostic_final_ce",
     "diagnostic_final_cosine",
@@ -122,6 +124,8 @@ NUMERIC_COLUMNS = {
     "diagnostic_delta_action_obs_cosine",
     "diagnostic_success_failure_ce_gap",
     "diagnostic_success_failure_cosine_gap",
+    "diagnostic_rows_with_targets",
+    "diagnostic_target_tokens",
 }
 
 
@@ -677,10 +681,12 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
 
     summary_path = Path(path)
     report_paths = diagnostic_report_paths(summary_path)
-    return {
+    row = {
         **meta,
         "diagnostic_summary_path": path,
-        "diagnostic_rows": summary.get("rows", ""),
+        "diagnostic_rows": summary.get("rows", final.get("rows", "")),
+        "diagnostic_rows_with_targets": final.get("rows_with_targets", ""),
+        "diagnostic_target_tokens": final.get("target_tokens", ""),
         "diagnostic_init_ce": baseline.get("token_mean_ce", ""),
         "diagnostic_final_step": final.get("checkpoint_step", ""),
         "diagnostic_token_mean_ce": final.get("token_mean_ce", ""),
@@ -700,8 +706,9 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         "diagnostic_success_failure_cosine_gap": ""
         if success_cosine is None or failure_cosine is None
         else f"{success_cosine - failure_cosine:.10g}",
-        "status": "diagnosed",
     }
+    row["status"] = "diagnosed" if has_complete_diagnostic_result(row) else "diagnostic_incomplete"
+    return row
 
 
 def diagnostic_report_paths(summary_path: Path) -> dict[str, str]:
@@ -986,8 +993,34 @@ def build_diagnostic_command(
     return f"{prefix} bash {shlex.quote(diagnostic_script)}"
 
 
-def has_diagnostic_result(row: dict[str, Any]) -> bool:
+def has_diagnostic_artifact(row: dict[str, Any]) -> bool:
     return bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+
+
+def has_complete_diagnostic_result(row: dict[str, Any], target_step: int = 150) -> bool:
+    if not has_diagnostic_artifact(row):
+        return False
+    final_step = coerce_int(row.get("diagnostic_final_step"))
+    if final_step is None or final_step < target_step:
+        return False
+    if coerce_float(row.get("diagnostic_token_mean_ce")) is None:
+        return False
+    final_cosine = coerce_float(row.get("diagnostic_action_obs_cosine"))
+    if final_cosine is None:
+        final_cosine = coerce_float(row.get("diagnostic_final_cosine"))
+    if final_cosine is None:
+        return False
+    for key in ("diagnostic_rows_with_targets", "diagnostic_target_tokens"):
+        if row.get(key) in ("", None):
+            continue
+        value = coerce_int(row.get(key))
+        if value is None or value <= 0:
+            return False
+    return True
+
+
+def has_diagnostic_result(row: dict[str, Any]) -> bool:
+    return has_complete_diagnostic_result(row)
 
 
 def annotate_train_commands(rows: list[dict[str, Any]], train_cuda: str, train_script: str, dump_rollouts: bool = False) -> None:
@@ -1047,24 +1080,35 @@ def annotate_diagnostic_commands(
         if has_diagnostic_result(row):
             row["diagnostic_readiness"] = "diagnosed"
             continue
-        if row.get("diagnostic_command"):
+        diagnostic_incomplete = has_diagnostic_artifact(row)
+        if diagnostic_incomplete:
+            row["diagnostic_command"] = ""
+        if has_diagnostic_artifact(row):
+            row["diagnostic_readiness"] = "diagnostic_incomplete"
+        elif row.get("diagnostic_command"):
             row["diagnostic_readiness"] = "ready_for_diagnostic"
             continue
         if not checkpoint_root_from_row(row):
-            row["diagnostic_readiness"] = "missing_training_log" if not row.get("train_log_path") else "waiting_for_checkpoint"
+            row["diagnostic_readiness"] = (
+                "diagnostic_incomplete"
+                if diagnostic_incomplete
+                else "missing_training_log"
+                if not row.get("train_log_path")
+                else "waiting_for_checkpoint"
+            )
             continue
         if not has_diagnostic_target_checkpoint(row, transition_step=transition_step):
-            row["diagnostic_readiness"] = "waiting_for_checkpoint"
+            row["diagnostic_readiness"] = "diagnostic_incomplete" if diagnostic_incomplete else "waiting_for_checkpoint"
             continue
         checkpoint_root = checkpoint_root_from_row(row)
         transition_jsonl = transition_jsonl_from_row(row, work_root=work_root, transition_step=transition_step)
         if not checkpoint_root or not transition_jsonl:
-            row["diagnostic_readiness"] = "missing_transition_dump"
+            row["diagnostic_readiness"] = "diagnostic_incomplete" if diagnostic_incomplete else "missing_transition_dump"
             continue
         row["diagnostic_checkpoint_root"] = checkpoint_root
         row["diagnostic_transition_jsonl"] = transition_jsonl
         if not transition_jsonl_is_available(transition_jsonl):
-            row["diagnostic_readiness"] = "missing_transition_dump"
+            row["diagnostic_readiness"] = "diagnostic_incomplete" if diagnostic_incomplete else "missing_transition_dump"
             continue
         row["diagnostic_readiness"] = "ready_for_diagnostic"
         row["diagnostic_command"] = build_diagnostic_command(
@@ -1080,7 +1124,7 @@ def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
     for row in rows:
         has_train = bool(row.get("train_log_path"))
         has_eval = row_has_eval(row)
-        has_diagnostic = bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+        has_diagnostic = has_diagnostic_result(row)
         missing_diagnostic_reports = []
         if has_diagnostic:
             for key, label in (
@@ -1255,7 +1299,7 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         readiness = str(row.get("eval_readiness") or "")
         if readiness in group:
             group[readiness] += 1
-        if row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None):
+        if has_diagnostic_result(row):
             group["diagnosed"] += 1
         diagnostic_readiness = str(row.get("diagnostic_readiness") or "")
         if diagnostic_readiness == "ready_for_diagnostic":
@@ -1282,7 +1326,7 @@ def row_has_eval(row: dict[str, Any]) -> bool:
 
 
 def row_has_diagnostic(row: dict[str, Any]) -> bool:
-    return bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+    return has_diagnostic_result(row)
 
 
 def objective_eval_values(rows: list[dict[str, Any]], objective: str) -> list[float]:
@@ -1577,7 +1621,7 @@ def render_markdown(
     diagnostic_command_rows = [
         row
         for row in scoped_rows
-        if row.get("diagnostic_command") and not row.get("diagnostic_summary_path")
+        if row.get("diagnostic_command") and not has_diagnostic_result(row)
     ]
     if diagnostic_command_rows:
         lines.append("## Diagnostic Commands")
