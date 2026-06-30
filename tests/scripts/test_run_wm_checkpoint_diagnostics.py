@@ -144,3 +144,97 @@ def test_run_wm_checkpoint_diagnostics_can_skip_report_generation(tmp_path):
     assert "report_md=" not in result.stdout
     assert (out_dir / "checkpoint_scores.csv").stat().st_size > 0
     assert not (out_dir / "checkpoint_diagnostics_report.md").exists()
+
+
+def test_run_wm_checkpoint_diagnostics_rejects_stale_scorer_outputs(tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "run_wm_checkpoint_diagnostics.sh"
+    transitions = tmp_path / "transitions.wm_transitions.jsonl"
+    transitions.write_text("{}\n", encoding="utf-8")
+    ckpt_root = tmp_path / "exp"
+    ckpt_root.mkdir()
+
+    fake_scorer = tmp_path / "fake_scorer.py"
+    fake_scorer.write_text("# exits without writing outputs\n", encoding="utf-8")
+    fake_reporter = tmp_path / "fake_reporter.py"
+    fake_reporter.write_text("raise SystemExit('reporter should not run')\n", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "checkpoint_scores.csv").write_text("stale\n", encoding="utf-8")
+    (out_dir / "checkpoint_scores_summary.json").write_text(
+        json.dumps({"checkpoints": [{"checkpoint_label": "stale"}]}),
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "TRANSITIONS_JSONL": str(transitions),
+        "CKPT_ROOT": str(ckpt_root),
+        "COMMON_SH": str(tmp_path / "missing_common.sh"),
+        "MODEL": "/model",
+        "PYTHON": sys.executable,
+        "SCORER": str(fake_scorer),
+        "REPORTER": str(fake_reporter),
+        "OUT_DIR": str(out_dir),
+        "STEPS": "init",
+        "GENERATE_REPORT": "0",
+    }
+
+    result = subprocess.run(["bash", str(script)], env=env, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    assert result.returncode != 0
+    assert "WM_CHECKPOINT_DIAGNOSTICS_DONE" not in result.stdout
+
+
+def test_run_wm_checkpoint_diagnostics_rejects_stale_report_outputs(tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "run_wm_checkpoint_diagnostics.sh"
+    transitions = tmp_path / "transitions.wm_transitions.jsonl"
+    transitions.write_text("{}\n", encoding="utf-8")
+    ckpt_root = tmp_path / "exp"
+    ckpt_root.mkdir()
+
+    fake_scorer = tmp_path / "fake_scorer.py"
+    fake_scorer.write_text(
+        "\n".join(
+            [
+                "import csv, json, pathlib, sys",
+                "args = sys.argv[1:]",
+                "out_csv = pathlib.Path(args[args.index('--output-csv') + 1])",
+                "summary_json = pathlib.Path(args[args.index('--summary-json') + 1])",
+                "out_csv.parent.mkdir(parents=True, exist_ok=True)",
+                "with out_csv.open('w', newline='', encoding='utf-8') as handle:",
+                "    writer = csv.writer(handle)",
+                "    writer.writerow(['checkpoint_label'])",
+                "    writer.writerow(['exp_init'])",
+                "summary_json.write_text(json.dumps({'checkpoints': [{'checkpoint_label': 'exp_init', 'checkpoint_step': 'init'}]}), encoding='utf-8')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fake_reporter = tmp_path / "fake_reporter.py"
+    fake_reporter.write_text("# exits without writing report outputs\n", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    for name in (
+        "checkpoint_diagnostics_report.md",
+        "checkpoint_diagnostics_report.csv",
+        "checkpoint_diagnostics_report.svg",
+    ):
+        (out_dir / name).write_text("stale report\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "TRANSITIONS_JSONL": str(transitions),
+        "CKPT_ROOT": str(ckpt_root),
+        "COMMON_SH": str(tmp_path / "missing_common.sh"),
+        "MODEL": "/model",
+        "PYTHON": sys.executable,
+        "SCORER": str(fake_scorer),
+        "REPORTER": str(fake_reporter),
+        "OUT_DIR": str(out_dir),
+        "STEPS": "init",
+    }
+
+    result = subprocess.run(["bash", str(script)], env=env, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    assert result.returncode != 0
+    assert "WM_CHECKPOINT_DIAGNOSTICS_DONE" not in result.stdout

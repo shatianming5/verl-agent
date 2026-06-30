@@ -718,9 +718,18 @@ def diagnostic_report_paths(summary_path: Path) -> dict[str, str]:
         "diagnostic_report_svg_path": "checkpoint_diagnostics_report.svg",
     }
     paths = {}
+    summary_mtime = summary_path.stat().st_mtime
     for key, filename in files.items():
         candidate = summary_path.with_name(filename)
-        paths[key] = str(candidate) if candidate.is_file() else ""
+        try:
+            candidate_stat = candidate.stat()
+        except OSError:
+            paths[key] = ""
+            continue
+        if candidate.is_file() and candidate_stat.st_size > 0 and candidate_stat.st_mtime >= summary_mtime:
+            paths[key] = str(candidate)
+        else:
+            paths[key] = ""
     return paths
 
 

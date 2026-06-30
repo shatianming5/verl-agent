@@ -1,6 +1,7 @@
 import csv
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -992,6 +993,57 @@ def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path)
     assert row["has_diagnostic"] == "yes"
     assert row["missing_artifacts"] == "diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
     assert row["final_report_readiness"] == "missing:diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
+
+
+def test_parse_diagnostic_summary_ignores_empty_or_stale_report_paths(tmp_path):
+    module = _load_module()
+    summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
+    summary_dir.mkdir()
+    summary_path = summary_dir / "checkpoint_scores_summary.json"
+    summary = {
+        "transition_jsonl": "/work/logs/rollouts/wm_obs_ce_l0p01_s0/150.wm_transitions.jsonl",
+        "checkpoints": [
+            {
+                "checkpoint_label": "init",
+                "checkpoint_step": "init",
+                "token_mean_ce": 2.0,
+                "row_mean_action_obs_cosine": 0.10,
+            },
+            {
+                "checkpoint_label": "step150",
+                "checkpoint_step": "150",
+                "token_mean_ce": 1.5,
+                "row_mean_action_obs_cosine": 0.35,
+            },
+        ],
+    }
+    report_names = (
+        "checkpoint_diagnostics_report.md",
+        "checkpoint_diagnostics_report.csv",
+        "checkpoint_diagnostics_report.svg",
+    )
+    for report_name in report_names:
+        report_path = summary_dir / report_name
+        report_path.write_text("stale report\n", encoding="utf-8")
+        os.utime(report_path, (1000, 1000))
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    os.utime(summary_path, (2000, 2000))
+
+    row = module.parse_diagnostic_summary(str(summary_path))
+
+    assert row["diagnostic_report_md_path"] == ""
+    assert row["diagnostic_report_csv_path"] == ""
+    assert row["diagnostic_report_svg_path"] == ""
+
+    for report_name in report_names:
+        (summary_dir / report_name).write_text("", encoding="utf-8")
+        os.utime(summary_dir / report_name, (3000, 3000))
+
+    row = module.parse_diagnostic_summary(str(summary_path))
+
+    assert row["diagnostic_report_md_path"] == ""
+    assert row["diagnostic_report_csv_path"] == ""
+    assert row["diagnostic_report_svg_path"] == ""
 
 
 def test_incomplete_diagnostic_summary_does_not_count_as_complete(tmp_path):

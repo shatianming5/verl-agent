@@ -41,6 +41,10 @@ CHAT_TEMPLATE_KWARGS_JSON=${CHAT_TEMPLATE_KWARGS_JSON:-{}}
 GENERATE_REPORT=${GENERATE_REPORT:-1}
 
 mkdir -p "$OUT_DIR"
+rm -f "$OUT_CSV" "$SUMMARY_JSON"
+if [[ "$GENERATE_REPORT" != "0" ]]; then
+  rm -f "$REPORT_MD" "$REPORT_CSV" "$REPORT_SVG"
+fi
 
 checkpoint_args=()
 for step in $STEPS; do
