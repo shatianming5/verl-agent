@@ -35,6 +35,7 @@ CSV_COLUMNS = [
     "eval_n",
     "eval_readiness",
     "eval_command",
+    "eval_target_checkpoint_path",
     "eval_result_path",
     "eval_checkpoint_path",
     "train_step",
@@ -628,13 +629,16 @@ def build_eval_command(row: dict[str, Any], eval_cuda: str, eval_n: str, eval_sc
 
 def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: str, eval_script: str) -> None:
     for row in rows:
+        row["eval_target_checkpoint_path"] = ""
         if coerce_float(row.get("eval_mean")) is not None:
             row["eval_readiness"] = "evaluated"
             row["eval_command"] = ""
+            row["eval_target_checkpoint_path"] = str(row.get("eval_checkpoint_path") or "")
             continue
         if row.get("eval_result_path"):
             row["eval_readiness"] = "eval_incomplete"
             row["eval_command"] = ""
+            row["eval_target_checkpoint_path"] = str(row.get("eval_checkpoint_path") or "")
             continue
 
         latest_checkpoint_step = coerce_int(row.get("latest_checkpoint_step"))
@@ -642,6 +646,7 @@ def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: 
         if latest_checkpoint_step is not None and latest_checkpoint_step >= 150 and latest_checkpoint_path:
             row["eval_readiness"] = "ready_for_eval"
             row["eval_command"] = build_eval_command(row, eval_cuda=eval_cuda, eval_n=eval_n, eval_script=eval_script)
+            row["eval_target_checkpoint_path"] = latest_checkpoint_path
         elif latest_checkpoint_step is not None or row.get("train_log_path"):
             row["eval_readiness"] = "waiting_for_checkpoint"
             row["eval_command"] = ""
@@ -734,7 +739,8 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
             lines.append("Ready eval commands:")
             lines.append("")
             for row in ready_rows:
-                lines.append(f"- `{row.get('run_key', '')}`: `{row['eval_command']}`")
+                target = str(row.get("eval_target_checkpoint_path") or row.get("latest_checkpoint_path") or "")
+                lines.append(f"- `{row.get('run_key', '')}` checkpoint `{target}`: `{row['eval_command']}`")
         lines.append("")
 
     lines.append("## Artifact Paths")
@@ -744,6 +750,7 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
         if row.get("tag"):
             lines.append(f"- Tag: `{row['tag']}`")
         for key, title in (
+            ("eval_target_checkpoint_path", "Eval target checkpoint"),
             ("eval_result_path", "Eval result"),
             ("eval_checkpoint_path", "Eval checkpoint"),
             ("latest_checkpoint_path", "Latest checkpoint"),
