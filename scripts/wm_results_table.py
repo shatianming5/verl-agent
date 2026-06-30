@@ -595,6 +595,49 @@ def success_bucket(summary: dict[str, Any], label: str, success: bool) -> dict[s
     return {}
 
 
+def checkpoint_root_from_checkpoint_path(path: Any) -> str:
+    checkpoint_path = str(path or "").strip()
+    if not checkpoint_path or checkpoint_path.lower() in {"base", "init", "none"}:
+        return ""
+    path_obj = Path(checkpoint_path)
+    if path_obj.name == "actor" and re.fullmatch(r"global_step_\d+", path_obj.parent.name):
+        return str(path_obj.parent.parent)
+    if re.fullmatch(r"global_step_\d+", path_obj.name):
+        return str(path_obj.parent)
+    return checkpoint_path
+
+
+def diagnostic_checkpoint_root(summary: dict[str, Any], final: dict[str, Any]) -> str:
+    root = checkpoint_root_from_checkpoint_path(final.get("checkpoint_path"))
+    if root:
+        return root
+
+    for checkpoint in summary.get("checkpoints", []):
+        if isinstance(checkpoint, dict):
+            root = checkpoint_root_from_checkpoint_path(checkpoint.get("checkpoint_path"))
+            if root:
+                return root
+
+    provenance = summary.get("provenance")
+    if isinstance(provenance, dict):
+        for checkpoint in provenance.get("checkpoints", []):
+            if isinstance(checkpoint, dict):
+                root = checkpoint_root_from_checkpoint_path(checkpoint.get("path"))
+                if root:
+                    return root
+    return ""
+
+
+def diagnostic_transition_jsonl(summary: dict[str, Any]) -> str:
+    transition_jsonl = summary.get("transition_jsonl", "")
+    if transition_jsonl:
+        return str(transition_jsonl)
+    provenance = summary.get("provenance")
+    if isinstance(provenance, dict):
+        return str(provenance.get("transition_jsonl", "") or "")
+    return ""
+
+
 def numeric_delta(row: dict[str, Any], baseline: dict[str, Any], key: str) -> str:
     value = coerce_float(row.get(key))
     base = coerce_float(baseline.get(key))
@@ -644,6 +687,8 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         "diagnostic_report_md_path": str(summary_path.with_name("checkpoint_diagnostics_report.md")),
         "diagnostic_report_csv_path": str(summary_path.with_name("checkpoint_diagnostics_report.csv")),
         "diagnostic_report_svg_path": str(summary_path.with_name("checkpoint_diagnostics_report.svg")),
+        "diagnostic_transition_jsonl": diagnostic_transition_jsonl(summary),
+        "diagnostic_checkpoint_root": diagnostic_checkpoint_root(summary, final),
         **provenance,
         "diagnostic_success_failure_ce_gap": ""
         if success_ce is None or failure_ce is None

@@ -812,6 +812,8 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     assert row["diagnostic_report_md_path"].endswith("checkpoint_diagnostics_report.md")
     assert row["diagnostic_report_csv_path"].endswith("checkpoint_diagnostics_report.csv")
     assert row["diagnostic_report_svg_path"].endswith("checkpoint_diagnostics_report.svg")
+    assert row["diagnostic_transition_jsonl"] == "/work/logs/rollouts/wm_obs_ce_l0p01_s0/150.wm_transitions.jsonl"
+    assert row["diagnostic_checkpoint_root"] == "/ckpt"
     assert row["diagnostic_checkpoint_count"] == 2
     assert row["diagnostic_max_length"] == 512
     assert row["diagnostic_batch_size"] == 4
