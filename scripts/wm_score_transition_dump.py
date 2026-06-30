@@ -161,9 +161,8 @@ def load_transitions(path: str, max_rows: int = 0) -> list[dict[str, Any]]:
 
 def active_mask(row: dict[str, Any]) -> bool:
     value = row.get("active_masks", True)
-    if isinstance(value, list):
-        return bool(value[0]) if value else False
-    return bool(value)
+    parsed = _to_bool(value)
+    return bool(parsed) if parsed is not None else bool(value)
 
 
 def _to_float(value: Any) -> float | None:
@@ -176,9 +175,27 @@ def _to_float(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _to_bool(value: Any) -> bool | None:
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    if value in (0, 1):
+        return bool(value)
+    return None
+
+
 def episode_success(row: dict[str, Any]) -> bool | None:
     if "episode_success" in row:
-        return bool(row["episode_success"])
+        parsed = _to_bool(row["episode_success"])
+        if parsed is not None:
+            return parsed
     episode_reward = _to_float(row.get("episode_rewards"))
     if episode_reward is not None:
         return episode_reward > 0.0
@@ -546,10 +563,14 @@ def mean(values: list[float]) -> float | None:
     return sum(finite) / len(finite) if finite else None
 
 
+def numeric_values(rows: list[dict[str, Any]], key: str) -> list[float]:
+    return [float(row[key]) for row in rows if row.get(key) not in ("", None)]
+
+
 def summarize_metric_group(group: list[dict[str, Any]]) -> dict[str, Any]:
     token_rows = [row for row in group if isinstance(row.get("target_tokens"), int) and row["target_tokens"] > 0]
     total_tokens = sum(int(row["target_tokens"]) for row in token_rows)
-    total_nll = sum(float(row["nll_sum"]) for row in token_rows if row.get("nll_sum") != "")
+    total_nll = sum(numeric_values(token_rows, "nll_sum"))
     token_ce = total_nll / total_tokens if total_tokens else None
     return {
         "rows": len(group),
@@ -557,20 +578,12 @@ def summarize_metric_group(group: list[dict[str, Any]]) -> dict[str, Any]:
         "target_tokens": total_tokens,
         "token_mean_ce": safe_float(token_ce),
         "token_mean_perplexity": safe_float(math.exp(min(token_ce, 80.0)) if token_ce is not None else None),
-        "row_mean_ce": safe_float(mean([float(row["ce"]) for row in token_rows if row.get("ce") != ""])),
-        "row_mean_target_confidence": safe_float(
-            mean([float(row["target_confidence_mean"]) for row in token_rows if row.get("target_confidence_mean") != ""])
-        ),
-        "row_mean_target_entropy": safe_float(
-            mean([float(row["target_entropy_mean"]) for row in token_rows if row.get("target_entropy_mean") != ""])
-        ),
-        "row_mean_action_hidden_norm": safe_float(
-            mean([float(row["action_hidden_norm"]) for row in group if row.get("action_hidden_norm") != ""])
-        ),
-        "row_mean_obs_hidden_norm": safe_float(mean([float(row["obs_hidden_norm"]) for row in group if row.get("obs_hidden_norm") != ""])),
-        "row_mean_action_obs_cosine": safe_float(
-            mean([float(row["action_obs_cosine"]) for row in group if row.get("action_obs_cosine") != ""])
-        ),
+        "row_mean_ce": safe_float(mean(numeric_values(token_rows, "ce"))),
+        "row_mean_target_confidence": safe_float(mean(numeric_values(token_rows, "target_confidence_mean"))),
+        "row_mean_target_entropy": safe_float(mean(numeric_values(token_rows, "target_entropy_mean"))),
+        "row_mean_action_hidden_norm": safe_float(mean(numeric_values(group, "action_hidden_norm"))),
+        "row_mean_obs_hidden_norm": safe_float(mean(numeric_values(group, "obs_hidden_norm"))),
+        "row_mean_action_obs_cosine": safe_float(mean(numeric_values(group, "action_obs_cosine"))),
     }
 
 
@@ -593,7 +606,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         checkpoint_summaries.append(summary)
 
         for success_value in (True, False):
-            subgroup = [row for row in group if row.get("episode_success") is success_value]
+            subgroup = [row for row in group if _to_bool(row.get("episode_success")) is success_value]
             if subgroup:
                 bucket = summarize_metric_group(subgroup)
                 bucket.update(

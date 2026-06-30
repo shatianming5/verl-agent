@@ -647,7 +647,7 @@ def test_expected_run_merges_with_existing_artifacts(tmp_path):
     assert rows[0]["final_report_readiness"] == "missing:diagnostic"
 
 
-def test_expected_run_flags_metadata_conflicts(tmp_path):
+def test_expected_run_allows_tag_variants_without_blocking_conflict(tmp_path):
     module = _load_module()
     eval_path = tmp_path / "eval10x_obs_ce_l0p01_s0_results.txt"
     eval_path.write_text(
@@ -670,13 +670,54 @@ def test_expected_run_flags_metadata_conflicts(tmp_path):
     module.annotate_artifact_coverage(rows)
 
     assert len(rows) == 1
-    assert rows[0]["metadata_conflicts"] == "tag=wm_obs_ce_l0p01_s0!=wrong_tag"
+    assert rows[0]["metadata_conflicts"] == ""
     assert rows[0]["has_eval"] == "yes"
-    assert rows[0]["missing_artifacts"] == "train_log,diagnostic,metadata_conflict"
-    assert rows[0]["final_report_readiness"] == "missing:train_log,diagnostic,metadata_conflict"
+    assert rows[0]["missing_artifacts"] == "train_log,diagnostic"
+    assert rows[0]["final_report_readiness"] == "missing:train_log,diagnostic"
 
     markdown = module.render_markdown(rows)
-    assert "- Metadata conflicts: `tag=wm_obs_ce_l0p01_s0!=wrong_tag`" in markdown
+    assert "- Metadata conflicts:" not in markdown
+
+
+def test_expected_run_flags_blocking_metadata_conflicts():
+    module = _load_module()
+    records = {}
+    module.merge_record(
+        records,
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "seed": "0",
+            "lambda_obs": "0.01",
+            "expected": "yes",
+        },
+    )
+    module.merge_record(
+        records,
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "seed": "1",
+            "lambda_obs": "0.03",
+            "eval_mean": 0.74,
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.4,
+            "diagnostic_action_obs_cosine": 0.3,
+            "diagnostic_report_md_path": "/work/diag/checkpoint_diagnostics_report.md",
+            "diagnostic_report_csv_path": "/work/diag/checkpoint_diagnostics_report.csv",
+            "diagnostic_report_svg_path": "/work/diag/checkpoint_diagnostics_report.svg",
+            "train_log_path": "/work/logs/train.log",
+        },
+    )
+    rows = list(records.values())
+    module.annotate_artifact_coverage(rows)
+
+    assert rows[0]["metadata_conflicts"] == "seed=0!=1;lambda_obs=0.01!=0.03"
+    assert rows[0]["missing_artifacts"] == "metadata_conflict"
+    assert rows[0]["final_report_readiness"] == "missing:metadata_conflict"
+
+    markdown = module.render_markdown(rows)
+    assert "- Metadata conflicts: `seed=0!=1;lambda_obs=0.01!=0.03`" in markdown
 
 
 def test_goal_rd_expected_runs_cover_full_matrix():
@@ -982,6 +1023,55 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     assert "- Diagnostic cwd: `/work/verl-agent`" in markdown
     assert "- Diagnostic chat template kwargs: `{\"enable_thinking\": false}`" in markdown
     assert '- Diagnostic argv: `["wm_score_transition_dump.py","--model-path","/model"]`' in markdown
+
+
+def test_parse_diagnostic_summary_coerces_string_success_buckets(tmp_path):
+    module = _load_module()
+    summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
+    summary_dir.mkdir()
+    summary_path = summary_dir / "checkpoint_scores_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "checkpoints": [
+                    {
+                        "checkpoint_label": "init",
+                        "checkpoint_step": "init",
+                        "token_mean_ce": 2.0,
+                        "row_mean_action_obs_cosine": 0.10,
+                    },
+                    {
+                        "checkpoint_label": "step150",
+                        "checkpoint_step": "150",
+                        "token_mean_ce": 1.5,
+                        "row_mean_action_obs_cosine": 0.35,
+                    },
+                ],
+                "success_buckets": [
+                    {
+                        "checkpoint_label": "step150",
+                        "checkpoint_step": "150",
+                        "episode_success": "true",
+                        "token_mean_ce": 1.2,
+                        "row_mean_action_obs_cosine": 0.50,
+                    },
+                    {
+                        "checkpoint_label": "step150",
+                        "checkpoint_step": "150",
+                        "episode_success": "false",
+                        "token_mean_ce": 1.9,
+                        "row_mean_action_obs_cosine": 0.20,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    row = module.parse_diagnostic_summary(str(summary_path))
+
+    assert row["diagnostic_success_failure_ce_gap"] == "0.7"
+    assert row["diagnostic_success_failure_cosine_gap"] == "0.3"
 
 
 def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path):

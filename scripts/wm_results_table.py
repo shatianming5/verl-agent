@@ -131,6 +131,7 @@ NUMERIC_COLUMNS = {
 }
 
 METADATA_KEYS = ("method", "objective", "tag", "seed", "lambda_obs", "lambda_latent")
+BLOCKING_METADATA_KEYS = ("objective", "seed", "lambda_obs", "lambda_latent")
 
 
 def parse_args() -> argparse.Namespace:
@@ -262,6 +263,20 @@ def coerce_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    if value in (0, 1):
+        return bool(value)
+    return None
 
 
 def coerce_int(value: Any) -> int | None:
@@ -603,7 +618,7 @@ def choose_final_checkpoint(checkpoints: list[dict[str, Any]]) -> dict[str, Any]
 
 def success_bucket(summary: dict[str, Any], label: str, success: bool) -> dict[str, Any]:
     for bucket in summary.get("success_buckets", []):
-        if str(bucket.get("checkpoint_label", "")) == label and bucket.get("episode_success") is success:
+        if str(bucket.get("checkpoint_label", "")) == label and coerce_bool(bucket.get("episode_success")) is success:
             return bucket
     return {}
 
@@ -838,7 +853,7 @@ def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> Non
     for key in METADATA_KEYS:
         if not record.get(key) and row.get(key):
             record[key] = row[key]
-        elif metadata_values_conflict(key, record.get(key), row.get(key)):
+        elif key in BLOCKING_METADATA_KEYS and metadata_values_conflict(key, record.get(key), row.get(key)):
             record_metadata_conflict(record, key, record.get(key), row.get(key))
 
     for key, value in row.items():

@@ -90,6 +90,61 @@ def test_encode_transitions_masks_only_active_next_observation_tokens():
     assert encoded[1].episode_success is False
 
 
+def test_string_boolean_fields_are_normalized():
+    module = _load_module()
+    tokenizer = FakeTokenizer()
+
+    encoded = module.encode_transitions(
+        [
+            _row(active_masks="false", episode_success="false", episode_rewards=1.0),
+            _row(active_masks="true", episode_success="true", episode_rewards=0.0),
+        ],
+        tokenizer=tokenizer,
+        max_length=96,
+    )
+
+    assert encoded[0].target_tokens == 0
+    assert encoded[0].episode_success is False
+    assert encoded[1].target_tokens > 0
+    assert encoded[1].episode_success is True
+
+    summary = module.summarize(
+        [
+            {
+                "checkpoint_label": "step150",
+                "checkpoint_path": "/ckpt/global_step_150",
+                "checkpoint_step": "150",
+                "target_tokens": 2,
+                "nll_sum": 2.0,
+                "ce": 1.0,
+                "target_confidence_mean": 0.3,
+                "target_entropy_mean": 1.1,
+                "action_hidden_norm": 2.0,
+                "obs_hidden_norm": 3.0,
+                "action_obs_cosine": 0.5,
+                "episode_success": "true",
+            },
+            {
+                "checkpoint_label": "step150",
+                "checkpoint_path": "/ckpt/global_step_150",
+                "checkpoint_step": "150",
+                "target_tokens": 2,
+                "nll_sum": 4.0,
+                "ce": 2.0,
+                "target_confidence_mean": 0.2,
+                "target_entropy_mean": 1.4,
+                "action_hidden_norm": 2.0,
+                "obs_hidden_norm": 3.0,
+                "action_obs_cosine": 0.1,
+                "episode_success": "false",
+            },
+        ]
+    )
+
+    buckets = {bucket["episode_success"]: bucket["token_mean_ce"] for bucket in summary["success_buckets"]}
+    assert buckets == {True: 1.0, False: 2.0}
+
+
 def test_load_transitions_and_summary_success_buckets(tmp_path):
     module = _load_module()
     transition_path = tmp_path / "transitions.jsonl"
