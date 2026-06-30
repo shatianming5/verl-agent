@@ -9,7 +9,7 @@
 ## Report Generation
 
 - Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`
-- Report revision: `da5254addefeec7c6da0cfee080cbb30819af381`
+- Report revision: `8830585ecc2c3cd5957826413586280b3c26744b`
 - Eval result inputs: `6`
 - Train log inputs: `49`
 - Diagnostic summary inputs: `4`
