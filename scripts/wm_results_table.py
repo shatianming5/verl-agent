@@ -671,6 +671,7 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
     provenance = diagnostic_provenance_fields(summary)
 
     summary_path = Path(path)
+    report_paths = diagnostic_report_paths(summary_path)
     return {
         **meta,
         "diagnostic_summary_path": path,
@@ -684,9 +685,7 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         "diagnostic_final_cosine": final.get("row_mean_action_obs_cosine", ""),
         "diagnostic_delta_action_obs_cosine": numeric_delta(final, baseline, "row_mean_action_obs_cosine"),
         "diagnostic_best_step": best.get("checkpoint_step", ""),
-        "diagnostic_report_md_path": str(summary_path.with_name("checkpoint_diagnostics_report.md")),
-        "diagnostic_report_csv_path": str(summary_path.with_name("checkpoint_diagnostics_report.csv")),
-        "diagnostic_report_svg_path": str(summary_path.with_name("checkpoint_diagnostics_report.svg")),
+        **report_paths,
         "diagnostic_transition_jsonl": diagnostic_transition_jsonl(summary),
         "diagnostic_checkpoint_root": diagnostic_checkpoint_root(summary, final),
         **provenance,
@@ -698,6 +697,19 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         else f"{success_cosine - failure_cosine:.10g}",
         "status": "diagnosed",
     }
+
+
+def diagnostic_report_paths(summary_path: Path) -> dict[str, str]:
+    files = {
+        "diagnostic_report_md_path": "checkpoint_diagnostics_report.md",
+        "diagnostic_report_csv_path": "checkpoint_diagnostics_report.csv",
+        "diagnostic_report_svg_path": "checkpoint_diagnostics_report.svg",
+    }
+    paths = {}
+    for key, filename in files.items():
+        candidate = summary_path.with_name(filename)
+        paths[key] = str(candidate) if candidate.is_file() else ""
+    return paths
 
 
 def diagnostic_provenance_fields(summary: dict[str, Any]) -> dict[str, Any]:
@@ -999,6 +1011,15 @@ def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
         has_train = bool(row.get("train_log_path"))
         has_eval = bool(row.get("eval_result_path") or coerce_float(row.get("eval_mean")) is not None)
         has_diagnostic = bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+        missing_diagnostic_reports = []
+        if has_diagnostic:
+            for key, label in (
+                ("diagnostic_report_md_path", "diagnostic_report_md"),
+                ("diagnostic_report_csv_path", "diagnostic_report_csv"),
+                ("diagnostic_report_svg_path", "diagnostic_report_svg"),
+            ):
+                if not row.get(key):
+                    missing_diagnostic_reports.append(label)
         row["has_train_log"] = "yes" if has_train else "no"
         row["has_eval"] = "yes" if has_eval else "no"
         row["has_diagnostic"] = "yes" if has_diagnostic else "no"
@@ -1009,6 +1030,7 @@ def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
             missing.append("eval")
         if not has_diagnostic:
             missing.append("diagnostic")
+        missing.extend(missing_diagnostic_reports)
         row["missing_artifacts"] = ",".join(missing)
         if row.get("expected") == "yes":
             row["final_report_readiness"] = "complete" if not missing else f"missing:{row['missing_artifacts']}"

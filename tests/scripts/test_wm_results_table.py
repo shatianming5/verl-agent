@@ -809,6 +809,12 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
         ),
         encoding="utf-8",
     )
+    for report_name in (
+        "checkpoint_diagnostics_report.md",
+        "checkpoint_diagnostics_report.csv",
+        "checkpoint_diagnostics_report.svg",
+    ):
+        (summary_dir / report_name).write_text("diagnostic report\n", encoding="utf-8")
 
     row = module.parse_diagnostic_summary(str(summary_path))
 
@@ -833,6 +839,50 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     assert row["diagnostic_batch_size"] == 4
     assert row["diagnostic_device"] == "cuda:0"
     assert row["diagnostic_dtype"] == "bfloat16"
+
+
+def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path):
+    module = _load_module()
+    summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
+    summary_dir.mkdir()
+    summary_path = summary_dir / "checkpoint_scores_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "transition_jsonl": "/work/logs/rollouts/wm_obs_ce_l0p01_s0/150.wm_transitions.jsonl",
+                "checkpoints": [
+                    {
+                        "checkpoint_label": "init",
+                        "checkpoint_step": "init",
+                        "token_mean_ce": 2.0,
+                        "row_mean_action_obs_cosine": 0.10,
+                    },
+                    {
+                        "checkpoint_label": "step150",
+                        "checkpoint_step": "150",
+                        "token_mean_ce": 1.5,
+                        "row_mean_action_obs_cosine": 0.35,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    row = module.parse_diagnostic_summary(str(summary_path))
+
+    assert row["diagnostic_report_md_path"] == ""
+    assert row["diagnostic_report_csv_path"] == ""
+    assert row["diagnostic_report_svg_path"] == ""
+
+    row["expected"] = "yes"
+    row["train_log_path"] = "/work/logs/train.log"
+    row["eval_mean"] = 0.72
+    module.annotate_artifact_coverage([row])
+
+    assert row["has_diagnostic"] == "yes"
+    assert row["missing_artifacts"] == "diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
+    assert row["final_report_readiness"] == "missing:diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
 
 
 def test_expand_paths_expands_explicit_glob_paths(tmp_path):
@@ -1004,6 +1054,12 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    for report_name in (
+        "checkpoint_diagnostics_report.md",
+        "checkpoint_diagnostics_report.csv",
+        "checkpoint_diagnostics_report.svg",
+    ):
+        (diagnostics_dir / report_name).write_text("diagnostic report\n", encoding="utf-8")
     smoke_log = logs_dir / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_smoke_20260630_010203.log"
     smoke_log.write_text(
         "\n".join(
