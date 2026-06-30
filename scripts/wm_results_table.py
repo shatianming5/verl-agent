@@ -715,6 +715,45 @@ def format_checkpoint(row: dict[str, Any]) -> str:
     return str(row.get("latest_checkpoint_path") or row.get("eval_checkpoint_path") or "")
 
 
+def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        objective = str(row.get("objective") or "unknown")
+        group = groups.setdefault(
+            objective,
+            {
+                "objective": objective,
+                "runs": 0,
+                "seeds": set(),
+                "evaluated": 0,
+                "ready_for_eval": 0,
+                "waiting_for_checkpoint": 0,
+                "eval_incomplete": 0,
+                "missing_training_log": 0,
+                "diagnosed": 0,
+            },
+        )
+        group["runs"] += 1
+        if row.get("seed") not in ("", None):
+            group["seeds"].add(str(row["seed"]))
+        readiness = str(row.get("eval_readiness") or "")
+        if readiness in group:
+            group[readiness] += 1
+        if row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None):
+            group["diagnosed"] += 1
+
+    result = []
+    for group in groups.values():
+        result.append(
+            {
+                **group,
+                "seeds": ",".join(sorted(group["seeds"], key=lambda value: (coerce_int(value) is None, coerce_int(value) or 0, value))),
+            }
+        )
+    order = {"grpo_baseline": 0, "obs_ce": 1, "latent": 2, "unknown": 9}
+    return sorted(result, key=lambda row: (order.get(str(row["objective"]), 8), str(row["objective"])))
+
+
 def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str = DEFAULT_WORK) -> str:
     lines = ["# ALFWorld World-Model Results", ""]
     if branch:
@@ -758,6 +797,27 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
                 cells.append(str(row.get(key, "")))
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
+
+    coverage_rows = objective_coverage(rows)
+    if coverage_rows:
+        lines.append("## Objective Coverage")
+        lines.append("")
+        coverage_columns = [
+            ("objective", "objective"),
+            ("runs", "runs"),
+            ("seeds", "seeds"),
+            ("evaluated", "evaluated"),
+            ("ready_for_eval", "ready"),
+            ("waiting_for_checkpoint", "waiting"),
+            ("eval_incomplete", "eval incomplete"),
+            ("missing_training_log", "missing train log"),
+            ("diagnosed", "diagnosed"),
+        ]
+        lines.append("| " + " | ".join(title for _, title in coverage_columns) + " |")
+        lines.append("| " + " | ".join("---" for _ in coverage_columns) + " |")
+        for row in coverage_rows:
+            lines.append("| " + " | ".join(str(row.get(key, "")) for key, _ in coverage_columns) + " |")
+        lines.append("")
 
     readiness_counts = Counter(str(row.get("eval_readiness") or "unknown") for row in rows)
     if readiness_counts:

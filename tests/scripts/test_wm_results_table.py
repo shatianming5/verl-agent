@@ -161,6 +161,57 @@ def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
     assert "CKPT=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150" in markdown
 
 
+def test_objective_coverage_summarizes_eval_and_diagnostics():
+    module = _load_module()
+    rows = [
+        {
+            "run_key": "grpo_baseline_s0",
+            "objective": "grpo_baseline",
+            "seed": "0",
+            "eval_readiness": "evaluated",
+            "diagnostic_summary_path": "/work/diag/base.json",
+        },
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "seed": "0",
+            "eval_readiness": "waiting_for_checkpoint",
+        },
+        {
+            "run_key": "obs_ce_l0p01_s1",
+            "objective": "obs_ce",
+            "seed": "1",
+            "eval_readiness": "ready_for_eval",
+        },
+        {
+            "run_key": "latent_l0p001_s1",
+            "objective": "latent",
+            "seed": "1",
+            "eval_readiness": "eval_incomplete",
+            "diagnostic_token_mean_ce": 1.4,
+        },
+    ]
+
+    coverage = module.objective_coverage(rows)
+
+    assert coverage[0]["objective"] == "grpo_baseline"
+    assert coverage[0]["evaluated"] == 1
+    assert coverage[0]["diagnosed"] == 1
+    assert coverage[1]["objective"] == "obs_ce"
+    assert coverage[1]["seeds"] == "0,1"
+    assert coverage[1]["ready_for_eval"] == 1
+    assert coverage[1]["waiting_for_checkpoint"] == 1
+    assert coverage[2]["objective"] == "latent"
+    assert coverage[2]["eval_incomplete"] == 1
+    assert coverage[2]["diagnosed"] == 1
+
+    markdown = module.render_markdown(rows)
+    assert "## Objective Coverage" in markdown
+    assert "| grpo_baseline | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 1 |" in markdown
+    assert "| obs_ce | 2 | 0,1 | 0 | 1 | 1 | 0 | 0 | 0 |" in markdown
+    assert "| latent | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 1 |" in markdown
+
+
 def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     module = _load_module()
     summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
