@@ -9,7 +9,7 @@
 ## Report Generation
 
 - Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`
-- Report revision: `bebec6b0fc34bbf69669ef21a465a73d10b73a63`
+- Report revision: `ebea759bed69ec8e93d45b89fbee7f76b0f3fdf2`
 - Eval result inputs: `6`
 - Train log inputs: `49`
 - Diagnostic summary inputs: `4`
@@ -50,7 +50,7 @@
 | obs_ce_l0p05_s1 | wm_obs_ce_l0p05_s1 | obs_ce | 1 | 0.05 |  |  |  | missing_training_log | missing_training_log |  |  |  | no_checkpoint |  |  |  |  |  |
 | latent_s0 | wmls_l1 | latent | 0 |  |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint |  | latent_loss=1.007, cosine=-0.007 | 1 | no_checkpoint |  |  |  |  | training_complete |
 | latent_l0p001_s0 | wmlat_l0p001_s0 | latent | 0 |  | 0.001 | 0.6735 +/- 0.0267 (n=10) | 10 | evaluated | diagnosed | 0.7270 | latent_loss=0.317, cosine=0.683 | 150 | missing_backup | CE 1.4187 | -0.0064 | 0.1378 | -0.0384 | evaluated;training_complete;diagnosed |
-| latent_l0p001_s1 | wmlat_l0p001_s1 | latent | 1 |  | 0.001 |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.7270 | latent_loss=0.312, cosine=0.688 | 103 | missing_backup |  |  |  |  | training_seen |
+| latent_l0p001_s1 | wmlat_l0p001_s1 | latent | 1 |  | 0.001 |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.7270 | latent_loss=0.383, cosine=0.617 | 104 | missing_backup |  |  |  |  | training_seen |
 
 ## Result Summary
 
