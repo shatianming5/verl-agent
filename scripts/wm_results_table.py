@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,8 @@ CSV_COLUMNS = [
     "eval_mean",
     "eval_std",
     "eval_n",
+    "eval_readiness",
+    "eval_command",
     "eval_result_path",
     "eval_checkpoint_path",
     "train_step",
@@ -100,6 +103,9 @@ def parse_args() -> argparse.Namespace:
         help="Auto-discover standard artifacts under --work-root/logs and add them to explicit inputs.",
     )
     parser.add_argument("--branch", default=None, help="Branch name to show in the report. Defaults to current git branch if available.")
+    parser.add_argument("--eval-cuda", default="<free_2gpu_pair>", help="CUDA_VISIBLE_DEVICES value to use in generated eval commands.")
+    parser.add_argument("--eval-n", default="10", help="N_EVALS value to use in generated eval commands.")
+    parser.add_argument("--eval-script", default="scripts/eval10x_alfworld.sh", help="Eval script path to use in generated eval commands.")
     parser.add_argument("--output-md", help="Markdown report path. Prints to stdout if no output path is provided.")
     parser.add_argument("--output-csv", help="Machine-readable table path.")
     return parser.parse_args()
@@ -599,6 +605,45 @@ def build_records(eval_paths: list[str], train_logs: list[str], diagnostic_paths
     return sorted(records.values(), key=objective_sort_key)
 
 
+def build_eval_command(row: dict[str, Any], eval_cuda: str, eval_n: str, eval_script: str) -> str:
+    checkpoint_path = str(row.get("latest_checkpoint_path") or "")
+    if not checkpoint_path:
+        return ""
+    label = str(row.get("tag") or row.get("run_key") or "world_model_run")
+    assignments = {
+        "CKPT": checkpoint_path,
+        "LABEL": label,
+        "CUDA_VISIBLE_DEVICES": eval_cuda,
+        "N_EVALS": str(eval_n),
+    }
+    prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in assignments.items())
+    return f"{prefix} bash {shlex.quote(eval_script)}"
+
+
+def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: str, eval_script: str) -> None:
+    for row in rows:
+        if coerce_float(row.get("eval_mean")) is not None:
+            row["eval_readiness"] = "evaluated"
+            row["eval_command"] = ""
+            continue
+        if row.get("eval_result_path"):
+            row["eval_readiness"] = "eval_incomplete"
+            row["eval_command"] = ""
+            continue
+
+        latest_checkpoint_step = coerce_int(row.get("latest_checkpoint_step"))
+        latest_checkpoint_path = str(row.get("latest_checkpoint_path") or "")
+        if latest_checkpoint_step is not None and latest_checkpoint_step >= 150 and latest_checkpoint_path:
+            row["eval_readiness"] = "ready_for_eval"
+            row["eval_command"] = build_eval_command(row, eval_cuda=eval_cuda, eval_n=eval_n, eval_script=eval_script)
+        elif latest_checkpoint_step is not None or row.get("train_log_path"):
+            row["eval_readiness"] = "waiting_for_checkpoint"
+            row["eval_command"] = ""
+        else:
+            row["eval_readiness"] = "missing_training_log"
+            row["eval_command"] = ""
+
+
 def git_branch() -> str:
     try:
         result = subprocess.run(
@@ -644,6 +689,7 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
         ("lambda_latent", "lambda_latent"),
         ("eval", "eval mean +/- std"),
         ("eval_n", "eval n"),
+        ("eval_readiness", "eval readiness"),
         ("val_success_last", "last online val"),
         ("wm_metric_last", "last WM metric"),
         ("train_step", "train step"),
@@ -692,6 +738,8 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
             lines.append(f"- Command summary: `{row['command_summary']}`")
         if row.get("eval_start_line"):
             lines.append(f"- Eval line: `{row['eval_start_line']}`")
+        if row.get("eval_command"):
+            lines.append(f"- Eval command: `{row['eval_command']}`")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -730,6 +778,7 @@ def main() -> None:
     train_logs = expand_paths(args.train_log, args.train_log_glob)
     diagnostic_paths = expand_paths(args.diagnostic_summary, args.diagnostic_glob)
     rows = build_records(eval_paths, train_logs, diagnostic_paths)
+    annotate_eval_readiness(rows, eval_cuda=args.eval_cuda, eval_n=args.eval_n, eval_script=args.eval_script)
     branch = args.branch if args.branch is not None else git_branch()
     markdown = render_markdown(rows, branch=branch, work_root=args.work_root)
 

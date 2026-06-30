@@ -112,6 +112,41 @@ def test_parse_train_log_handles_live_tqdm_step_lines(tmp_path):
     assert row["wm_metric_last"] == "latent_loss=0.257, cosine=0.743"
 
 
+def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
+    module = _load_module()
+    ready = {
+        "run_key": "latent_l0p001_s1",
+        "tag": "wmlat_l0p001_s1",
+        "latest_checkpoint_step": 150,
+        "latest_checkpoint_path": "/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150",
+    }
+    waiting = {
+        "run_key": "obs_ce_l0p01_s0",
+        "latest_checkpoint_step": 120,
+        "latest_checkpoint_path": "/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0/global_step_120",
+        "train_log_path": "/work/logs/train.log",
+    }
+    evaluated = {
+        "run_key": "grpo_baseline_s0",
+        "eval_mean": 0.729,
+        "latest_checkpoint_step": 150,
+        "latest_checkpoint_path": "/work/checkpoints/grpo/global_step_150",
+    }
+
+    rows = [ready, waiting, evaluated]
+    module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="scripts/eval10x_alfworld.sh")
+
+    assert ready["eval_readiness"] == "ready_for_eval"
+    assert ready["eval_command"] == (
+        "CKPT=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150 "
+        "LABEL=wmlat_l0p001_s1 CUDA_VISIBLE_DEVICES=4,5 N_EVALS=10 bash scripts/eval10x_alfworld.sh"
+    )
+    assert waiting["eval_readiness"] == "waiting_for_checkpoint"
+    assert waiting["eval_command"] == ""
+    assert evaluated["eval_readiness"] == "evaluated"
+    assert evaluated["eval_command"] == ""
+
+
 def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     module = _load_module()
     summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
@@ -236,6 +271,7 @@ def test_main_writes_markdown_and_csv(tmp_path, monkeypatch):
         rows = list(csv.DictReader(handle))
     assert rows[0]["run_key"] == "grpo_baseline_s0"
     assert rows[0]["eval_mean"] == "0.729"
+    assert rows[0]["eval_readiness"] == "evaluated"
     assert rows[0]["train_step"] == "150"
 
 
@@ -352,6 +388,7 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     row = rows[0]
     assert row["run_key"] == "obs_ce_l0p01_s0"
     assert row["eval_mean"] == "0.75"
+    assert row["eval_readiness"] == "evaluated"
     assert row["train_step"] == "150"
     assert row["diagnostic_token_mean_ce"] == "1.4"
     assert row["diagnostic_delta_token_mean_ce"] == "-0.4"
