@@ -829,6 +829,10 @@ def transition_jsonl_from_row(row: dict[str, Any], work_root: str, transition_st
     return str(Path(work_root) / "logs" / "world_model_rollouts" / experiment_name / f"{transition_step}.wm_transitions.jsonl")
 
 
+def transition_jsonl_is_available(path: str) -> bool:
+    return bool(path) and Path(path).is_file()
+
+
 def build_diagnostic_command(
     row: dict[str, Any],
     work_root: str,
@@ -906,6 +910,8 @@ def annotate_diagnostic_commands(
             continue
         row["diagnostic_checkpoint_root"] = checkpoint_root
         row["diagnostic_transition_jsonl"] = transition_jsonl
+        if not transition_jsonl_is_available(transition_jsonl):
+            continue
         row["diagnostic_command"] = build_diagnostic_command(
             row,
             work_root=work_root,
