@@ -251,6 +251,35 @@ def test_objective_coverage_summarizes_eval_and_diagnostics():
     assert "| latent | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 1 |" in markdown
 
 
+def test_result_summary_groups_eval_by_objective_and_lambda():
+    module = _load_module()
+    rows = [
+        {"run_key": "grpo_baseline_s0", "objective": "grpo_baseline", "seed": "0", "eval_mean": 0.70, "eval_std": 0.02},
+        {"run_key": "grpo_baseline_s1", "objective": "grpo_baseline", "seed": "1", "eval_mean": 0.72, "eval_std": 0.04},
+        {"run_key": "obs_ce_l0p01_s0", "objective": "obs_ce", "seed": "0", "lambda_obs": "0.01", "eval_mean": 0.73, "eval_std": 0.03},
+        {"run_key": "obs_ce_l0p01_s1", "objective": "obs_ce", "seed": "1", "lambda_obs": "0.01", "eval_mean": 0.75, "eval_std": 0.05},
+        {"run_key": "latent_l0p001_s0", "objective": "latent", "seed": "0", "lambda_latent": "0.001"},
+    ]
+
+    summary = module.result_summary(rows)
+
+    assert summary[0]["condition"] == "GRPO baseline"
+    assert summary[0]["evaluated"] == 2
+    assert summary[0]["eval_mean"] == "0.71"
+    assert summary[0]["delta_vs_baseline"] == "0"
+    assert summary[1]["condition"] == "obs_ce lambda_obs=0.01"
+    assert summary[1]["evaluated"] == 2
+    assert summary[1]["eval_mean"] == "0.74"
+    assert summary[1]["mean_eval_std"] == "0.04"
+    assert summary[1]["delta_vs_baseline"] == "0.03"
+    assert summary[2]["condition"] == "latent lambda_latent=0.001"
+    assert summary[2]["evaluated"] == 0
+
+    markdown = module.render_markdown(rows)
+    assert "## Result Summary" in markdown
+    assert "| obs_ce lambda_obs=0.01 | obs_ce | 0.01 |  | 2 | 2 | 0,1 | 0.7400 | 0.0141 | 0.0400 | 0.0300 |" in markdown
+
+
 def test_expected_run_coverage_reports_missing_artifacts():
     module = _load_module()
 

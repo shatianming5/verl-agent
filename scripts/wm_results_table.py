@@ -833,6 +833,98 @@ def format_checkpoint(row: dict[str, Any]) -> str:
     return str(row.get("latest_checkpoint_path") or row.get("eval_checkpoint_path") or "")
 
 
+def average(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def sample_std(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    mean = sum(values) / len(values)
+    return math.sqrt(sum((value - mean) ** 2 for value in values) / (len(values) - 1))
+
+
+def condition_label(objective: str, lambda_obs: str, lambda_latent: str) -> str:
+    if objective == "grpo_baseline":
+        return "GRPO baseline"
+    if objective == "obs_ce" and lambda_obs:
+        return f"obs_ce lambda_obs={lambda_obs}"
+    if objective == "latent" and lambda_latent:
+        return f"latent lambda_latent={lambda_latent}"
+    return objective or "unknown"
+
+
+def result_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        objective = str(row.get("objective") or "unknown")
+        lambda_obs = str(row.get("lambda_obs") or "")
+        lambda_latent = str(row.get("lambda_latent") or "")
+        group = groups.setdefault(
+            (objective, lambda_obs, lambda_latent),
+            {
+                "objective": objective,
+                "lambda_obs": lambda_obs,
+                "lambda_latent": lambda_latent,
+                "runs": 0,
+                "seeds": set(),
+                "eval_means": [],
+                "eval_stds": [],
+            },
+        )
+        group["runs"] += 1
+        if row.get("seed") not in ("", None):
+            group["seeds"].add(str(row["seed"]))
+        eval_mean = coerce_float(row.get("eval_mean"))
+        if eval_mean is not None:
+            group["eval_means"].append(eval_mean)
+        eval_std = coerce_float(row.get("eval_std"))
+        if eval_std is not None:
+            group["eval_stds"].append(eval_std)
+
+    baseline_means = [
+        value
+        for group in groups.values()
+        if group["objective"] == "grpo_baseline"
+        for value in group["eval_means"]
+    ]
+    baseline_mean = average(baseline_means)
+
+    result = []
+    for group in groups.values():
+        eval_means = group["eval_means"]
+        eval_stds = group["eval_stds"]
+        eval_mean = average(eval_means)
+        delta = None if eval_mean is None or baseline_mean is None else eval_mean - baseline_mean
+        result.append(
+            {
+                "condition": condition_label(group["objective"], group["lambda_obs"], group["lambda_latent"]),
+                "objective": group["objective"],
+                "lambda_obs": group["lambda_obs"],
+                "lambda_latent": group["lambda_latent"],
+                "runs": group["runs"],
+                "evaluated": len(eval_means),
+                "seeds": ",".join(sorted(group["seeds"], key=lambda value: (coerce_int(value) is None, coerce_int(value) or 0, value))),
+                "eval_mean": "" if eval_mean is None else f"{eval_mean:.10g}",
+                "eval_run_std": "" if sample_std(eval_means) is None else f"{sample_std(eval_means):.10g}",
+                "mean_eval_std": "" if average(eval_stds) is None else f"{average(eval_stds):.10g}",
+                "delta_vs_baseline": "" if delta is None else f"{delta:.10g}",
+            }
+        )
+
+    order = {"grpo_baseline": 0, "obs_ce": 1, "latent": 2, "unknown": 9}
+    return sorted(
+        result,
+        key=lambda row: (
+            order.get(str(row["objective"]), 8),
+            coerce_float(row.get("lambda_obs") or row.get("lambda_latent")) or 0.0,
+            str(row["condition"]),
+        ),
+    )
+
+
 def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -954,6 +1046,35 @@ def render_markdown(
                 cells.append(str(row.get(key, "")))
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
+
+    summary_rows = result_summary(rows)
+    if summary_rows:
+        lines.append("## Result Summary")
+        lines.append("")
+        summary_columns = [
+            ("condition", "condition"),
+            ("objective", "objective"),
+            ("lambda_obs", "lambda_obs"),
+            ("lambda_latent", "lambda_latent"),
+            ("runs", "runs"),
+            ("evaluated", "evaluated"),
+            ("seeds", "seeds"),
+            ("eval_mean", "mean eval"),
+            ("eval_run_std", "run std"),
+            ("mean_eval_std", "mean eval std"),
+            ("delta_vs_baseline", "delta vs baseline"),
+        ]
+        lines.append("| " + " | ".join(title for _, title in summary_columns) + " |")
+        lines.append("| " + " | ".join("---" for _ in summary_columns) + " |")
+        for row in summary_rows:
+            cells = []
+            for key, _ in summary_columns:
+                if key in {"eval_mean", "eval_run_std", "mean_eval_std", "delta_vs_baseline"}:
+                    cells.append(format_number(row.get(key)))
+                else:
+                    cells.append(str(row.get(key, "")))
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
 
     coverage_rows = objective_coverage(rows)
     if coverage_rows:
