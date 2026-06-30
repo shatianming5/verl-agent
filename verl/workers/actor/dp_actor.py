@@ -98,6 +98,23 @@ class DataParallelPPOActor(BasePPOActor):
     def _first_actor_parameter(self):
         return next(self.actor_module.parameters())
 
+    def _world_model_config(self):
+        return self.config.get("world_model", {})
+
+    def _obs_ce_coef(self) -> float:
+        world_model_config = self._world_model_config()
+        return float(world_model_config.get("lambda_obs", world_model_config.get("obs_ce_coef", 0.0)) or 0.0)
+
+    def _obs_ce_enabled(self) -> bool:
+        return self._obs_ce_coef() > 0.0
+
+    def _latent_loss_coef(self) -> float:
+        world_model_config = self._world_model_config()
+        lambda_latent = float(world_model_config.get("lambda_latent", 0.0) or 0.0)
+        if lambda_latent > 0.0:
+            return lambda_latent
+        return float(world_model_config.get("latent_loss_coef", 0.0) or 0.0)
+
     def _broadcast_world_model_parameters(self):
         if self.world_model_predictor is None:
             return
@@ -107,16 +124,22 @@ class DataParallelPPOActor(BasePPOActor):
             dist.broadcast(parameter.data, src=0)
 
     def _init_latent_world_model(self):
-        world_model_config = self.config.get("world_model", {})
-        self.world_model_loss_coef = float(world_model_config.get("latent_loss_coef", 0.0) or 0.0)
+        world_model_config = self._world_model_config()
+        self.world_model_loss_coef = self._latent_loss_coef()
         if self.world_model_loss_coef <= 0 or self.actor_optimizer is None:
             return
         if self.use_ulysses_sp:
-            raise ValueError("actor.world_model.latent_loss_coef > 0 is not supported with actor Ulysses sequence parallelism yet.")
+            raise ValueError("actor.world_model latent loss is not supported with actor Ulysses sequence parallelism yet.")
 
         hidden_size = self._infer_hidden_size()
-        predictor_hidden_size = int(world_model_config.get("predictor_hidden_size", hidden_size) or hidden_size)
-        dropout = float(world_model_config.get("predictor_dropout", 0.0) or 0.0)
+        predictor_hidden_size = world_model_config.get("predictor_hidden_size", None)
+        if predictor_hidden_size is None:
+            predictor_hidden_size = world_model_config.get("latent_predictor_hidden_size", hidden_size)
+        predictor_hidden_size = int(predictor_hidden_size or hidden_size)
+        dropout = world_model_config.get("predictor_dropout", None)
+        if dropout is None:
+            dropout = world_model_config.get("latent_predictor_dropout", 0.0)
+        dropout = float(dropout or 0.0)
         residual = bool(world_model_config.get("predictor_residual", True))
         first_param = self._first_actor_parameter()
 
@@ -198,7 +221,7 @@ class DataParallelPPOActor(BasePPOActor):
     def _has_latent_world_model_batch(self, micro_batch) -> bool:
         if self.world_model_predictor is None:
             return False
-        required_keys = [
+        legacy_keys = [
             "wm_input_ids",
             "wm_attention_mask",
             "wm_position_ids",
@@ -206,18 +229,101 @@ class DataParallelPPOActor(BasePPOActor):
             "wm_obs_end_idx",
             "wm_loss_mask",
         ]
-        return all(key in micro_batch for key in required_keys)
+        named_keys = [
+            "wm_latent_input_ids",
+            "wm_latent_attention_mask",
+            "wm_latent_position_ids",
+            "wm_latent_action_pos",
+            "wm_latent_obs_pos",
+            "wm_latent_loss_mask",
+        ]
+        return all(key in micro_batch for key in legacy_keys) or all(key in micro_batch for key in named_keys)
+
+    def _get_latent_world_model_batch(self, micro_batch):
+        if "wm_input_ids" in micro_batch:
+            return {
+                "input_ids": micro_batch["wm_input_ids"],
+                "attention_mask": micro_batch["wm_attention_mask"],
+                "position_ids": micro_batch["wm_position_ids"],
+                "action_pos": micro_batch["wm_action_end_idx"].long(),
+                "obs_pos": micro_batch["wm_obs_end_idx"].long(),
+                "loss_mask": micro_batch["wm_loss_mask"].float(),
+            }
+        return {
+            "input_ids": micro_batch["wm_latent_input_ids"],
+            "attention_mask": micro_batch["wm_latent_attention_mask"],
+            "position_ids": micro_batch["wm_latent_position_ids"],
+            "action_pos": micro_batch["wm_latent_action_pos"].long(),
+            "obs_pos": micro_batch["wm_latent_obs_pos"].long(),
+            "loss_mask": micro_batch["wm_latent_loss_mask"].float(),
+        }
+
+    def _has_obs_ce_batch(self, micro_batch) -> bool:
+        required_keys = [
+            "wm_obs_input_ids",
+            "wm_obs_attention_mask",
+            "wm_obs_position_ids",
+            "wm_obs_loss_mask",
+        ]
+        return self._obs_ce_enabled() and all(key in micro_batch for key in required_keys)
+
+    def _compute_obs_ce_loss(self, micro_batch, temperature, loss_agg_mode):
+        if not self._has_obs_ce_batch(micro_batch):
+            return None, {}
+
+        input_ids = micro_batch["wm_obs_input_ids"]
+        attention_mask = micro_batch["wm_obs_attention_mask"]
+        position_ids = micro_batch["wm_obs_position_ids"]
+        loss_mask = micro_batch["wm_obs_loss_mask"].float()
+
+        with torch.autocast(device_type=self.device_name, dtype=torch.bfloat16):
+            output = self.actor_module(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                use_cache=False,
+            )
+            logits = output.logits[:, :-1, :]
+            logits.div_(temperature)
+            labels = input_ids[:, 1:]
+            log_probs = logprobs_from_logits(logits=logits, labels=labels)
+
+        shifted_loss_mask = loss_mask[:, 1:].to(dtype=log_probs.dtype, device=log_probs.device)
+        token_count = shifted_loss_mask.sum()
+        loss_mat = -log_probs
+        if token_count.detach().item() <= 0:
+            zero = loss_mat.sum() * 0.0
+            return zero, {
+                "actor/wm_obs_ce_loss": 0.0,
+                "actor/wm_obs_ce_tokens": 0.0,
+                "world_model/obs_ce_loss": 0.0,
+                "world_model/obs_ce_tokens": 0.0,
+            }
+
+        if loss_agg_mode == "token-mean":
+            obs_ce_loss = (loss_mat * shifted_loss_mask).sum() / token_count
+        else:
+            obs_ce_loss = agg_loss(loss_mat=loss_mat, loss_mask=shifted_loss_mask, loss_agg_mode=loss_agg_mode)
+
+        metrics = {
+            "actor/wm_obs_ce_loss": obs_ce_loss.detach().item(),
+            "actor/wm_obs_ce_tokens": token_count.detach().item(),
+            "world_model/obs_ce_loss": obs_ce_loss.detach().item(),
+            "world_model/obs_ce_tokens": token_count.detach().item(),
+        }
+        return obs_ce_loss, metrics
 
     def _compute_latent_world_model_loss(self, micro_batch):
         if not self._has_latent_world_model_batch(micro_batch):
             return None, {}
 
-        wm_input_ids = micro_batch["wm_input_ids"]
-        wm_attention_mask = micro_batch["wm_attention_mask"]
-        wm_position_ids = micro_batch["wm_position_ids"]
-        wm_action_end_idx = micro_batch["wm_action_end_idx"].long()
-        wm_obs_end_idx = micro_batch["wm_obs_end_idx"].long()
-        wm_loss_mask = micro_batch["wm_loss_mask"].float()
+        wm_batch = self._get_latent_world_model_batch(micro_batch)
+        wm_input_ids = wm_batch["input_ids"]
+        wm_attention_mask = wm_batch["attention_mask"]
+        wm_position_ids = wm_batch["position_ids"]
+        wm_action_end_idx = wm_batch["action_pos"]
+        wm_obs_end_idx = wm_batch["obs_pos"]
+        wm_loss_mask = wm_batch["loss_mask"]
 
         valid_count = wm_loss_mask.sum()
         if valid_count.item() == 0:
@@ -535,7 +641,13 @@ class DataParallelPPOActor(BasePPOActor):
         multi_turn = data.meta_info.get("multi_turn", False)
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
-        world_model_keys = [
+        obs_ce_keys = [
+            "wm_obs_input_ids",
+            "wm_obs_attention_mask",
+            "wm_obs_position_ids",
+            "wm_obs_loss_mask",
+        ]
+        latent_legacy_keys = [
             "wm_input_ids",
             "wm_attention_mask",
             "wm_position_ids",
@@ -543,8 +655,21 @@ class DataParallelPPOActor(BasePPOActor):
             "wm_obs_end_idx",
             "wm_loss_mask",
         ]
-        if self.world_model_predictor is not None and all(key in data.batch.keys() for key in world_model_keys):
-            select_keys.extend(world_model_keys)
+        latent_named_keys = [
+            "wm_latent_input_ids",
+            "wm_latent_attention_mask",
+            "wm_latent_position_ids",
+            "wm_latent_action_pos",
+            "wm_latent_obs_pos",
+            "wm_latent_loss_mask",
+        ]
+        if self._obs_ce_enabled() and all(key in data.batch.keys() for key in obs_ce_keys):
+            select_keys.extend(obs_ce_keys)
+        if self.world_model_predictor is not None:
+            if all(key in data.batch.keys() for key in latent_legacy_keys):
+                select_keys.extend(latent_legacy_keys)
+            elif all(key in data.batch.keys() for key in latent_named_keys):
+                select_keys.extend(latent_named_keys)
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
@@ -647,6 +772,17 @@ class DataParallelPPOActor(BasePPOActor):
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         metrics["actor/kl_loss"] = kl_loss.detach().item()
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
+
+                    obs_ce_loss, obs_ce_metrics = self._compute_obs_ce_loss(
+                        data,
+                        temperature=temperature,
+                        loss_agg_mode=self._world_model_config().get("obs_ce_loss_agg_mode", "token-mean"),
+                    )
+                    if obs_ce_loss is not None:
+                        policy_loss = policy_loss + obs_ce_loss * self._obs_ce_coef()
+                        obs_ce_metrics["actor/wm_obs_ce_coef"] = self._obs_ce_coef()
+                        obs_ce_metrics["world_model/obs_ce_lambda"] = self._obs_ce_coef()
+                        append_to_dict(metrics, obs_ce_metrics)
 
                     latent_loss, world_model_metrics = self._compute_latent_world_model_loss(data)
                     if latent_loss is not None:

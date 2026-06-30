@@ -67,10 +67,20 @@ actor_rollout_ref:
     policy_loss:
       loss_mode: "vanilla"
     world_model:
+      lambda_obs: 0.0
+      obs_ce_coef: 0.0
+      obs_ce_max_length: 512
+      obs_ce_target: text
+      obs_ce_loss_agg_mode: token-mean
+      lambda_latent: 0.0
       latent_loss_coef: 0.0
+      latent_max_length: 512
+      latent_target: text
       max_observation_length: 256
       predictor_hidden_size: null
+      latent_predictor_hidden_size: 0
       predictor_dropout: 0.0
+      latent_predictor_dropout: 0.0
       predictor_residual: True
     checkpoint:
       contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
