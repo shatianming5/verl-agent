@@ -10,6 +10,9 @@ def test_eval10x_script_uses_short_ray_tmpdir_for_long_labels():
     assert "LABEL_HASH=$(printf" in text
     assert "export RAY_TMPDIR=/tmp/ray_eval_${LABEL_HASH}_${i}" in text
     assert "RAY_TMPDIR=/root/grpo/ray_tmp_${TAG}" not in text
+    assert "LAMBDA_LATENT" in text
+    assert "actor_rollout_ref.actor.world_model.lambda_latent=${LAMBDA_LATENT}" in text
+    assert '"${extra_hydra_args[@]}"' in text
 
     label = "wm_obs_ce_l0p01_s0"
     label_hash = subprocess.check_output(["cksum"], input=label.encode("utf-8"), text=False).decode().split()[0]

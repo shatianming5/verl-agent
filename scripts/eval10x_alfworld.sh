@@ -14,6 +14,43 @@ VAL_DATA_SIZE=${VAL_DATA_SIZE:-128}
 EVAL_DATASET=${EVAL_DATASET:-eval_in_distribution}
 N_GPUS=${N_GPUS:-2}
 ROLLOUT_TP=${ROLLOUT_TP:-2}
+EXTRA_HYDRA_OVERRIDES=${EXTRA_HYDRA_OVERRIDES:-}
+
+append_hydra_override() {
+  if [[ -n "$EXTRA_HYDRA_OVERRIDES" ]]; then
+    EXTRA_HYDRA_OVERRIDES+=" $1"
+  else
+    EXTRA_HYDRA_OVERRIDES="$1"
+  fi
+}
+
+if [[ -n "${LAMBDA_OBS:-}" ]]; then
+  OBS_CE_MAX_LENGTH=${OBS_CE_MAX_LENGTH:-512}
+  OBS_CE_LOSS_AGG_MODE=${OBS_CE_LOSS_AGG_MODE:-token-mean}
+  append_hydra_override "actor_rollout_ref.actor.world_model.obs_ce_enable=True"
+  append_hydra_override "actor_rollout_ref.actor.world_model.lambda_obs=${LAMBDA_OBS}"
+  append_hydra_override "actor_rollout_ref.actor.world_model.obs_ce_max_length=${OBS_CE_MAX_LENGTH}"
+  append_hydra_override "actor_rollout_ref.actor.world_model.obs_ce_loss_agg_mode=${OBS_CE_LOSS_AGG_MODE}"
+fi
+
+if [[ -n "${LAMBDA_LATENT:-}" ]]; then
+  LATENT_MAX_LENGTH=${LATENT_MAX_LENGTH:-512}
+  LATENT_TARGET=${LATENT_TARGET:-text}
+  LATENT_PREDICTOR_HIDDEN_SIZE=${LATENT_PREDICTOR_HIDDEN_SIZE:-0}
+  LATENT_PREDICTOR_DROPOUT=${LATENT_PREDICTOR_DROPOUT:-0.0}
+  append_hydra_override "actor_rollout_ref.actor.world_model.latent_enable=True"
+  append_hydra_override "actor_rollout_ref.actor.world_model.lambda_latent=${LAMBDA_LATENT}"
+  append_hydra_override "actor_rollout_ref.actor.world_model.latent_max_length=${LATENT_MAX_LENGTH}"
+  append_hydra_override "actor_rollout_ref.actor.world_model.latent_target=${LATENT_TARGET}"
+  append_hydra_override "actor_rollout_ref.actor.world_model.latent_predictor_hidden_size=${LATENT_PREDICTOR_HIDDEN_SIZE}"
+  append_hydra_override "actor_rollout_ref.actor.world_model.latent_predictor_dropout=${LATENT_PREDICTOR_DROPOUT}"
+fi
+
+extra_hydra_args=()
+if [[ -n "$EXTRA_HYDRA_OVERRIDES" ]]; then
+  # Intentional word splitting: Hydra overrides are passed as separate CLI args.
+  extra_hydra_args=($EXTRA_HYDRA_OVERRIDES)
+fi
 
 source /root/grpo/grpo_alfworld_common.sh
 export CUDA_VISIBLE_DEVICES
@@ -92,6 +129,7 @@ for i in $(seq 0 $((N_EVALS - 1))); do
     trainer.resume_from_path="$CKPT" \
     trainer.default_local_dir="$WORK/checkpoints/${TAG}" \
     trainer.default_hdfs_dir=null \
+    "${extra_hydra_args[@]}" \
     > "$LOG" 2>&1
 
   sr=$(grep -aoE "val/success_rate:[0-9.]+" "$LOG" | tail -1 | grep -oE "[0-9.]+")
