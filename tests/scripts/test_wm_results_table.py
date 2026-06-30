@@ -283,6 +283,108 @@ def test_expected_run_merges_with_existing_artifacts(tmp_path):
     assert rows[0]["final_report_readiness"] == "missing:diagnostic"
 
 
+def test_goal_rd_expected_runs_cover_full_matrix():
+    module = _load_module()
+
+    rows = module.build_records(
+        eval_paths=[],
+        train_logs=[],
+        diagnostic_paths=[],
+        expected_runs=module.GOAL_RD_EXPECTED_RUNS,
+    )
+    module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_artifact_coverage(rows)
+
+    run_keys = {row["run_key"] for row in rows}
+    assert len(rows) == 11
+    assert {
+        "grpo_baseline_s0",
+        "grpo_baseline_s1",
+        "grpo_baseline_s2",
+        "obs_ce_l0p01_s0",
+        "obs_ce_l0p01_s1",
+        "obs_ce_l0p03_s0",
+        "obs_ce_l0p03_s1",
+        "obs_ce_l0p05_s0",
+        "obs_ce_l0p05_s1",
+        "latent_l0p001_s0",
+        "latent_l0p001_s1",
+    } == run_keys
+
+    obs_l0p05_s1 = next(row for row in rows if row["run_key"] == "obs_ce_l0p05_s1")
+    assert obs_l0p05_s1["objective"] == "obs_ce"
+    assert obs_l0p05_s1["seed"] == "1"
+    assert obs_l0p05_s1["lambda_obs"] == "0.05"
+    assert obs_l0p05_s1["tag"] == "wm_obs_ce_l0p05_s1"
+    assert obs_l0p05_s1["final_report_readiness"] == "missing:train_log,eval,diagnostic"
+
+    coverage = {row["objective"]: row for row in module.objective_coverage(rows)}
+    assert coverage["grpo_baseline"]["runs"] == 3
+    assert coverage["obs_ce"]["runs"] == 6
+    assert coverage["latent"]["runs"] == 2
+
+
+def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkeypatch):
+    module = _load_module()
+    eval_path = tmp_path / "eval10x_wm_obs_ce_l0p01_s0_results.txt"
+    eval_path.write_text(
+        "\n".join(
+            [
+                "EVAL10X_START label=wm_obs_ce_l0p01_s0 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=4,5 Tue",
+                "EVAL10X_RESULT n=10 mean=0.7500 std=0.0200",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0_20260630_010203.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "RUN_ALFWORLD_OFFICIAL seed=0 tag=wm_obs_ce_l0p01_s0 cuda=4,5 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0",
+                "Training Progress: 150/150",
+                "val/success_rate:0.734",
+                "world_model/obs_ce_loss:0.144",
+                "saved /work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0/global_step_150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_md = tmp_path / "report.md"
+    output_csv = tmp_path / "report.csv"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wm_results_table.py",
+            "--eval-result",
+            str(eval_path),
+            "--train-log",
+            str(log_path),
+            "--expected-goal-rd-runs",
+            "--output-md",
+            str(output_md),
+            "--output-csv",
+            str(output_csv),
+        ],
+    )
+    module.main()
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "## Expected Run Coverage" in markdown
+    with output_csv.open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 11
+    by_key = {row["run_key"]: row for row in rows}
+    assert len(by_key) == 11
+    assert by_key["obs_ce_l0p01_s0"]["expected"] == "yes"
+    assert by_key["obs_ce_l0p01_s0"]["eval_readiness"] == "evaluated"
+    assert by_key["obs_ce_l0p01_s0"]["has_train_log"] == "yes"
+    assert by_key["obs_ce_l0p01_s0"]["has_eval"] == "yes"
+    assert by_key["obs_ce_l0p01_s0"]["final_report_readiness"] == "missing:diagnostic"
+    assert by_key["obs_ce_l0p03_s1"]["final_report_readiness"] == "missing:train_log,eval,diagnostic"
+
+
 def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     module = _load_module()
     summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"

@@ -21,6 +21,19 @@ from typing import Any
 DEFAULT_WORK = "/mnt/cephfs_home_tianming.sha/grpo_alfworld"
 DEFAULT_EVAL_SCRIPT = "/root/grpo/eval10x_alfworld.sh"
 RUN_PREFIX_RE = re.compile(r"grpo_qwen2\.5_1\.5b_alfworld_(.+?)(?:_\d{8}_\d{6})?(?:\.log)?$")
+GOAL_RD_EXPECTED_RUNS = [
+    "grpo_baseline_s0:objective=grpo_baseline,seed=0,tag=official_4to5",
+    "grpo_baseline_s1:objective=grpo_baseline,seed=1,tag=official_6to7",
+    "grpo_baseline_s2:objective=grpo_baseline,seed=2,tag=official_s2",
+    "obs_ce_l0p01_s0:objective=obs_ce,seed=0,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s0",
+    "obs_ce_l0p01_s1:objective=obs_ce,seed=1,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s1",
+    "obs_ce_l0p03_s0:objective=obs_ce,seed=0,lambda_obs=0.03,tag=wm_obs_ce_l0p03_s0",
+    "obs_ce_l0p03_s1:objective=obs_ce,seed=1,lambda_obs=0.03,tag=wm_obs_ce_l0p03_s1",
+    "obs_ce_l0p05_s0:objective=obs_ce,seed=0,lambda_obs=0.05,tag=wm_obs_ce_l0p05_s0",
+    "obs_ce_l0p05_s1:objective=obs_ce,seed=1,lambda_obs=0.05,tag=wm_obs_ce_l0p05_s1",
+    "latent_l0p001_s0:objective=latent,seed=0,lambda_latent=0.001,tag=wmlat_l0p001_s0",
+    "latent_l0p001_s1:objective=latent,seed=1,lambda_latent=0.001,tag=wmlat_l0p001_s1",
+]
 
 CSV_COLUMNS = [
     "run_key",
@@ -136,6 +149,11 @@ def parse_args() -> argparse.Namespace:
             "Expected run to include in coverage, even if no artifacts are found. "
             "Format: run_key or run_key:key=value,key=value."
         ),
+    )
+    parser.add_argument(
+        "--expected-goal-rd-runs",
+        action="store_true",
+        help="Include the standard GOAL_RD baseline, obs CE sweep, and latent expected runs in coverage.",
     )
     parser.add_argument("--output-md", help="Markdown report path. Prints to stdout if no output path is provided.")
     parser.add_argument("--output-csv", help="Machine-readable table path.")
@@ -987,7 +1005,10 @@ def main() -> None:
     eval_paths = expand_paths(args.eval_result, args.eval_glob)
     train_logs = expand_paths(args.train_log, args.train_log_glob)
     diagnostic_paths = expand_paths(args.diagnostic_summary, args.diagnostic_glob)
-    rows = build_records(eval_paths, train_logs, diagnostic_paths, expected_runs=args.expected_run)
+    expected_runs = list(args.expected_run)
+    if args.expected_goal_rd_runs:
+        expected_runs.extend(GOAL_RD_EXPECTED_RUNS)
+    rows = build_records(eval_paths, train_logs, diagnostic_paths, expected_runs=expected_runs)
     annotate_eval_readiness(rows, eval_cuda=args.eval_cuda, eval_n=args.eval_n, eval_script=args.eval_script)
     annotate_artifact_coverage(rows)
     branch = args.branch if args.branch is not None else git_branch()
