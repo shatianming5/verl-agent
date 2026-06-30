@@ -4,7 +4,7 @@ This directory mirrors the current small report artifacts from gpudev for offlin
 
 - Source root: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs`
 - Branch: `world-model-latent-objective`
-- Report revision: `21838b85edd983a6c45c1d1ad54d9b10720a922a`
+- Report revision: `cfcec7b365b938d009d26d86d639fae5a0331630`
 - Rows: `12` total, `11` expected GOAL_RD rows
 - Mirrored files:
   - `world_model_diagnostics/wm_ckpt_diag_seed0_official_full_20260628/checkpoint_diagnostics_report.csv`
