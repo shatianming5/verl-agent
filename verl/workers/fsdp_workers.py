@@ -168,6 +168,30 @@ class ActorRolloutRefWorker(Worker):
             self.config.ref.log_prob_micro_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
             self.config.ref.log_prob_micro_batch_size_per_gpu = self.config.ref.log_prob_micro_batch_size
 
+    def _register_actor_extra_param_groups_with_scheduler(self):
+        if self.actor_optimizer is None or self.actor_lr_scheduler is None:
+            return
+
+        param_group_count = len(self.actor_optimizer.param_groups)
+        if hasattr(self.actor_lr_scheduler, "lr_lambdas") and len(self.actor_lr_scheduler.lr_lambdas) < param_group_count:
+            last_lambda = self.actor_lr_scheduler.lr_lambdas[-1]
+            missing = param_group_count - len(self.actor_lr_scheduler.lr_lambdas)
+            self.actor_lr_scheduler.lr_lambdas.extend([last_lambda] * missing)
+
+        if hasattr(self.actor_lr_scheduler, "base_lrs") and len(self.actor_lr_scheduler.base_lrs) < param_group_count:
+            for param_group in self.actor_optimizer.param_groups[len(self.actor_lr_scheduler.base_lrs) :]:
+                param_group.setdefault("initial_lr", param_group["lr"])
+                self.actor_lr_scheduler.base_lrs.append(param_group["initial_lr"])
+
+        if hasattr(self.actor_lr_scheduler, "_last_lr") and len(self.actor_lr_scheduler._last_lr) < param_group_count:
+            for param_group in self.actor_optimizer.param_groups[len(self.actor_lr_scheduler._last_lr) :]:
+                self.actor_lr_scheduler._last_lr.append(param_group["lr"])
+
+    def _move_actor_world_model_predictor(self, device):
+        if not hasattr(self, "actor") or self.actor.world_model_predictor is None:
+            return
+        self.actor.world_model_predictor.to(device)
+
     def _build_model_optimizer(
         self,
         model_path,
@@ -564,6 +588,7 @@ class ActorRolloutRefWorker(Worker):
                 self.config.actor.use_remove_padding = use_remove_padding
                 self.config.actor.use_fused_kernels = use_fused_kernels
             self.actor = DataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
+            self._register_actor_extra_param_groups_with_scheduler()
 
         if self._is_rollout:
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
@@ -595,6 +620,9 @@ class ActorRolloutRefWorker(Worker):
                 lr_scheduler=self.actor_lr_scheduler,
                 processing_class=self.processor if self.processor is not None else self.tokenizer,
                 checkpoint_contents=self.config.actor.checkpoint.contents,
+                extra_state_provider=self.actor.extra_state_dict,
+                extra_state_loader=self.actor.load_extra_state_dict,
+                optimizer_state_adapter=self.actor.adapt_optimizer_state_dict,
             )
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
@@ -605,6 +633,7 @@ class ActorRolloutRefWorker(Worker):
         assert self._is_actor
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
+            self._move_actor_world_model_predictor(get_torch_device().current_device())
         if self._is_offload_optimizer:
             load_fsdp_optimizer(optimizer=self.actor_optimizer, device_id=get_torch_device().current_device())
 
@@ -632,6 +661,7 @@ class ActorRolloutRefWorker(Worker):
             output = output.to("cpu")
 
         if self._is_offload_param:
+            self._move_actor_world_model_predictor("cpu")
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
             log_gpu_memory_usage("After offload actor model during update_actor", logger=logger)
         if self._is_offload_optimizer:

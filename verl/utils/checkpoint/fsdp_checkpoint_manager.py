@@ -14,7 +14,7 @@
 
 import os
 import warnings
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 import torch.distributed
@@ -55,6 +55,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         lr_scheduler: torch.optim.lr_scheduler.LRScheduler,
         processing_class: Union[PreTrainedTokenizer, ProcessorMixin] = None,
         checkpoint_contents: Optional[list] = None,
+        extra_state_provider: Optional[Callable[[], dict]] = None,
+        extra_state_loader: Optional[Callable[[dict], None]] = None,
+        optimizer_state_adapter: Optional[Callable[[dict], dict]] = None,
         **kwargs,
     ):
         if checkpoint_contents is None:
@@ -72,6 +75,28 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             processing_class=processing_class,
             checkpoint_contents=checkpoint_contents,
         )
+        self.extra_state_provider = extra_state_provider
+        self.extra_state_loader = extra_state_loader
+        self.optimizer_state_adapter = optimizer_state_adapter
+
+    def _sync_lr_scheduler_param_groups(self):
+        if self.optimizer is None or self.lr_scheduler is None:
+            return
+
+        param_group_count = len(self.optimizer.param_groups)
+        if hasattr(self.lr_scheduler, "lr_lambdas") and len(self.lr_scheduler.lr_lambdas) < param_group_count:
+            last_lambda = self.lr_scheduler.lr_lambdas[-1]
+            missing = param_group_count - len(self.lr_scheduler.lr_lambdas)
+            self.lr_scheduler.lr_lambdas.extend([last_lambda] * missing)
+
+        if hasattr(self.lr_scheduler, "base_lrs") and len(self.lr_scheduler.base_lrs) < param_group_count:
+            for param_group in self.optimizer.param_groups[len(self.lr_scheduler.base_lrs) :]:
+                param_group.setdefault("initial_lr", param_group["lr"])
+                self.lr_scheduler.base_lrs.append(param_group["initial_lr"])
+
+        if hasattr(self.lr_scheduler, "_last_lr") and len(self.lr_scheduler._last_lr) < param_group_count:
+            for param_group in self.optimizer.param_groups[len(self.lr_scheduler._last_lr) :]:
+                self.lr_scheduler._last_lr.append(param_group["lr"])
 
     def load_checkpoint(self, local_path: str, hdfs_path: str = None, del_local_after_load=False):
         """
@@ -117,6 +142,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         with get_fsdp_state_ctx(self.model, StateDictType.SHARDED_STATE_DICT, state_dict_cfg, optim_cfg):
             self.model.load_state_dict(model_state_dict)
             if self.optimizer is not None:
+                if self.optimizer_state_adapter is not None:
+                    optimizer_state_dict = self.optimizer_state_adapter(optimizer_state_dict)
                 self.optimizer.load_state_dict(optimizer_state_dict)
         # recover random state
         if "rng" in extra_state_dict:
@@ -125,6 +152,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
 
         if self.lr_scheduler is not None:
             self.lr_scheduler.load_state_dict(lr_scheduler_state_dict)
+            self._sync_lr_scheduler_param_groups()
+        if self.extra_state_loader is not None:
+            self.extra_state_loader(extra_state_dict.get("custom_extra_state", {}))
 
     def save_checkpoint(self, local_path: str, hdfs_path: str = None, global_step: int = 0, max_ckpt_to_keep=None):
         """
@@ -173,6 +203,10 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                     "lr_scheduler": lr_scheduler_state_dict,
                     "rng": self.get_rng_state(),
                 }
+                if self.extra_state_provider is not None:
+                    custom_extra_state = self.extra_state_provider()
+                    if custom_extra_state:
+                        extra_state_dict["custom_extra_state"] = custom_extra_state
                 model_path = os.path.join(local_path, f"model_world_size_{self.world_size}_rank_{self.rank}.pt")
                 optim_path = os.path.join(local_path, f"optim_world_size_{self.world_size}_rank_{self.rank}.pt")
                 extra_path = os.path.join(local_path, f"extra_state_world_size_{self.world_size}_rank_{self.rank}.pt")

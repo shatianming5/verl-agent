@@ -229,6 +229,78 @@ class TrajectoryCollector:
 
         return new_batch
 
+    def _latent_world_model_config(self):
+        actor_rollout_ref_config = self.config.get("actor_rollout_ref", {})
+        actor_config = actor_rollout_ref_config.get("actor", {}) if actor_rollout_ref_config is not None else {}
+        return actor_config.get("world_model", {}) if actor_config is not None else {}
+
+    def _latent_world_model_enabled(self) -> bool:
+        world_model_config = self._latent_world_model_config()
+        return float(world_model_config.get("latent_loss_coef", 0.0) or 0.0) > 0.0
+
+    def _build_latent_world_model_tensors(self, batch: DataProto, next_obs: Dict) -> Dict[str, torch.Tensor]:
+        world_model_config = self._latent_world_model_config()
+        max_observation_length = int(world_model_config.get("max_observation_length", 256) or 0)
+        if max_observation_length <= 0:
+            raise ValueError("actor.world_model.max_observation_length must be positive when latent world-model loss is enabled.")
+
+        input_ids = batch.batch["input_ids"]
+        attention_mask = batch.batch["attention_mask"]
+        responses = batch.batch["responses"]
+        batch_size, action_seq_len = input_ids.shape
+        world_model_seq_len = action_seq_len + max_observation_length
+        device = input_ids.device
+        pad_token_id = self.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = self.tokenizer.eos_token_id
+        if pad_token_id is None:
+            raise ValueError("Tokenizer must define pad_token_id or eos_token_id for latent world-model tensors.")
+
+        wm_input_ids = torch.full(
+            (batch_size, world_model_seq_len),
+            fill_value=pad_token_id,
+            dtype=input_ids.dtype,
+            device=device,
+        )
+        wm_attention_mask = torch.zeros(
+            (batch_size, world_model_seq_len),
+            dtype=attention_mask.dtype,
+            device=device,
+        )
+        wm_action_end_idx = torch.zeros(batch_size, dtype=torch.long, device=device)
+        wm_obs_end_idx = torch.zeros(batch_size, dtype=torch.long, device=device)
+        wm_loss_mask = torch.zeros(batch_size, dtype=torch.float32, device=device)
+
+        next_obs_texts = next_obs.get("text", None)
+        response_length = responses.size(1)
+        response_attention_mask = attention_mask[:, -response_length:]
+        for item in range(batch_size):
+            valid_action_tokens = input_ids[item][attention_mask[item].bool()]
+            next_obs_text = "" if next_obs_texts is None else str(next_obs_texts[item] or "")
+            obs_token_ids = self.tokenizer.encode(next_obs_text, add_special_tokens=False)[:max_observation_length]
+            has_response = response_attention_mask[item].sum().item() > 0
+            is_valid = valid_action_tokens.numel() > 0 and len(obs_token_ids) > 0 and has_response
+            if not is_valid:
+                continue
+
+            obs_tokens = torch.tensor(obs_token_ids, dtype=input_ids.dtype, device=device)
+            world_model_tokens = torch.cat((valid_action_tokens, obs_tokens), dim=0)
+            world_model_length = world_model_tokens.numel()
+            wm_input_ids[item, :world_model_length] = world_model_tokens
+            wm_attention_mask[item, :world_model_length] = 1
+            wm_action_end_idx[item] = valid_action_tokens.numel() - 1
+            wm_obs_end_idx[item] = world_model_length - 1
+            wm_loss_mask[item] = 1.0
+
+        return {
+            "wm_input_ids": wm_input_ids,
+            "wm_attention_mask": wm_attention_mask,
+            "wm_position_ids": compute_position_id_with_mask(wm_attention_mask),
+            "wm_action_end_idx": wm_action_end_idx,
+            "wm_obs_end_idx": wm_obs_end_idx,
+            "wm_loss_mask": wm_loss_mask,
+        }
+
 
     def gather_rollout_data(
             self,
@@ -363,6 +435,10 @@ class TrajectoryCollector:
             text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
             
             next_obs, rewards, dones, infos = envs.step(text_actions)
+
+            if self._latent_world_model_enabled():
+                for key, value in self._build_latent_world_model_tensors(batch=batch, next_obs=next_obs).items():
+                    batch.batch[key] = value
 
             
             if len(rewards.shape) == 2:

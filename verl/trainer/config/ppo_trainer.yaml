@@ -66,6 +66,12 @@ actor_rollout_ref:
     ulysses_sequence_parallel_size: 1 # sp size
     policy_loss:
       loss_mode: "vanilla"
+    world_model:
+      latent_loss_coef: 0.0
+      max_observation_length: 256
+      predictor_hidden_size: null
+      predictor_dropout: 0.0
+      predictor_residual: True
     checkpoint:
       contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
     optim:

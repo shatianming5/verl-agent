@@ -25,6 +25,8 @@ from typing import Tuple
 
 import torch
 from torch import nn
+import torch.distributed as dist
+import torch.nn.functional as F
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 import verl.utils.torch_functional as verl_F
@@ -38,6 +40,7 @@ from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
 from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs, ulysses_pad
 from verl.workers.actor import BasePPOActor
+from verl.workers.actor.world_model import LatentTransitionPredictor
 
 if is_cuda_available:
     from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
@@ -57,6 +60,9 @@ class DataParallelPPOActor(BasePPOActor):
         super().__init__(config)
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
+        self.world_model_predictor = None
+        self.world_model_loss_coef = 0.0
+        self._last_world_model_grad_norm = None
 
         self.use_remove_padding = self.config.get("use_remove_padding", False)
         print(f"Actor use_remove_padding={self.use_remove_padding}")
@@ -72,6 +78,209 @@ class DataParallelPPOActor(BasePPOActor):
             else verl_F.entropy_from_logits
         )
         self.device_name = get_device_name()
+        self._init_latent_world_model()
+
+    def _actor_config(self):
+        module = self.actor_module
+        if hasattr(module, "_fsdp_wrapped_module"):
+            module = module._fsdp_wrapped_module
+        return getattr(module, "config", None)
+
+    def _infer_hidden_size(self) -> int:
+        config = self._actor_config()
+        candidate_configs = [config, getattr(config, "text_config", None)] if config is not None else []
+        for candidate in candidate_configs:
+            hidden_size = getattr(candidate, "hidden_size", None)
+            if hidden_size is not None:
+                return int(hidden_size)
+        raise ValueError("Cannot infer actor hidden_size for latent world-model predictor.")
+
+    def _first_actor_parameter(self):
+        return next(self.actor_module.parameters())
+
+    def _broadcast_world_model_parameters(self):
+        if self.world_model_predictor is None:
+            return
+        if not dist.is_available() or not dist.is_initialized() or dist.get_world_size() == 1:
+            return
+        for parameter in self.world_model_predictor.parameters():
+            dist.broadcast(parameter.data, src=0)
+
+    def _init_latent_world_model(self):
+        world_model_config = self.config.get("world_model", {})
+        self.world_model_loss_coef = float(world_model_config.get("latent_loss_coef", 0.0) or 0.0)
+        if self.world_model_loss_coef <= 0 or self.actor_optimizer is None:
+            return
+        if self.use_ulysses_sp:
+            raise ValueError("actor.world_model.latent_loss_coef > 0 is not supported with actor Ulysses sequence parallelism yet.")
+
+        hidden_size = self._infer_hidden_size()
+        predictor_hidden_size = int(world_model_config.get("predictor_hidden_size", hidden_size) or hidden_size)
+        dropout = float(world_model_config.get("predictor_dropout", 0.0) or 0.0)
+        residual = bool(world_model_config.get("predictor_residual", True))
+        first_param = self._first_actor_parameter()
+
+        self.world_model_predictor = LatentTransitionPredictor(
+            hidden_size=hidden_size,
+            bottleneck_size=predictor_hidden_size,
+            dropout=dropout,
+            residual=residual,
+        ).to(device=first_param.device, dtype=first_param.dtype)
+        self._broadcast_world_model_parameters()
+
+        optim_config = self.config.get("optim", {})
+        base_group = self.actor_optimizer.param_groups[0]
+        self.actor_optimizer.add_param_group(
+            {
+                "params": list(self.world_model_predictor.parameters()),
+                "lr": optim_config.get("lr", base_group["lr"]),
+                "weight_decay": optim_config.get("weight_decay", base_group.get("weight_decay", 0.0)),
+                "name": "latent_world_model_predictor",
+            }
+        )
+
+    def extra_state_dict(self):
+        if self.world_model_predictor is None:
+            return {}
+        return {
+            "world_model_predictor": {
+                key: value.detach().cpu()
+                for key, value in self.world_model_predictor.state_dict().items()
+            }
+        }
+
+    def load_extra_state_dict(self, state_dict):
+        if self.world_model_predictor is None:
+            return
+        predictor_state = (state_dict or {}).get("world_model_predictor", None)
+        if predictor_state is None:
+            print("WARN: latent world-model predictor state is missing from checkpoint; keeping current initialization.")
+            return
+        device = self._first_actor_parameter().device
+        predictor_state = {key: value.to(device=device) for key, value in predictor_state.items()}
+        self.world_model_predictor.load_state_dict(predictor_state)
+        self._broadcast_world_model_parameters()
+
+    def adapt_optimizer_state_dict(self, optimizer_state_dict):
+        if optimizer_state_dict is None or self.actor_optimizer is None:
+            return optimizer_state_dict
+
+        saved_param_groups = optimizer_state_dict.get("param_groups", [])
+        current_optimizer_state = self.actor_optimizer.state_dict()
+        current_param_groups = current_optimizer_state.get("param_groups", [])
+        if len(saved_param_groups) == len(current_param_groups):
+            return optimizer_state_dict
+
+        saved_state = optimizer_state_dict.get("state", {})
+        if self.world_model_predictor is not None and len(saved_param_groups) + 1 == len(current_param_groups):
+            print("WARN: optimizer checkpoint has no latent world-model param group; initializing predictor optimizer state from scratch.")
+            return {
+                **optimizer_state_dict,
+                "state": saved_state,
+                "param_groups": [*saved_param_groups, current_param_groups[-1]],
+            }
+
+        if (
+            self.world_model_predictor is None
+            and len(saved_param_groups) == len(current_param_groups) + 1
+            and saved_param_groups[-1].get("name") == "latent_world_model_predictor"
+        ):
+            print("WARN: dropping latent world-model optimizer state because latent loss is disabled.")
+            dropped_params = set(saved_param_groups[-1].get("params", []))
+            return {
+                **optimizer_state_dict,
+                "state": {param_id: state for param_id, state in saved_state.items() if param_id not in dropped_params},
+                "param_groups": saved_param_groups[:-1],
+            }
+
+        return optimizer_state_dict
+
+    def _has_latent_world_model_batch(self, micro_batch) -> bool:
+        if self.world_model_predictor is None:
+            return False
+        required_keys = [
+            "wm_input_ids",
+            "wm_attention_mask",
+            "wm_position_ids",
+            "wm_action_end_idx",
+            "wm_obs_end_idx",
+            "wm_loss_mask",
+        ]
+        return all(key in micro_batch for key in required_keys)
+
+    def _compute_latent_world_model_loss(self, micro_batch):
+        if not self._has_latent_world_model_batch(micro_batch):
+            return None, {}
+
+        wm_input_ids = micro_batch["wm_input_ids"]
+        wm_attention_mask = micro_batch["wm_attention_mask"]
+        wm_position_ids = micro_batch["wm_position_ids"]
+        wm_action_end_idx = micro_batch["wm_action_end_idx"].long()
+        wm_obs_end_idx = micro_batch["wm_obs_end_idx"].long()
+        wm_loss_mask = micro_batch["wm_loss_mask"].float()
+
+        valid_count = wm_loss_mask.sum()
+        if valid_count.item() == 0:
+            zero = torch.zeros((), device=wm_input_ids.device, dtype=torch.float32)
+            return zero, {"actor/wm_valid": 0.0}
+
+        with torch.autocast(device_type=self.device_name, dtype=torch.bfloat16):
+            output = self.actor_module(
+                input_ids=wm_input_ids,
+                attention_mask=wm_attention_mask,
+                position_ids=wm_position_ids,
+                use_cache=False,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            if output.hidden_states is None:
+                raise RuntimeError("Actor forward did not return hidden_states for latent world-model loss.")
+            hidden_states = output.hidden_states[-1]
+            batch_idx = torch.arange(hidden_states.size(0), device=hidden_states.device)
+            max_idx = hidden_states.size(1) - 1
+            action_hidden = hidden_states[batch_idx, wm_action_end_idx.clamp(min=0, max=max_idx)]
+            obs_hidden = hidden_states[batch_idx, wm_obs_end_idx.clamp(min=0, max=max_idx)].detach()
+            pred_hidden = self.world_model_predictor(action_hidden)
+
+        cosine = F.cosine_similarity(pred_hidden.float(), obs_hidden.float(), dim=-1)
+        per_sample_loss = 1.0 - cosine
+        latent_loss = torch.sum(per_sample_loss * wm_loss_mask) / valid_count.clamp_min(1.0)
+
+        with torch.no_grad():
+            valid = wm_loss_mask.bool()
+            metrics = {
+                "actor/wm_latent_loss": latent_loss.detach().item(),
+                "actor/wm_cosine": cosine[valid].mean().detach().item(),
+                "actor/wm_valid": valid_count.detach().item(),
+                "actor/wm_pred_norm": pred_hidden.float()[valid].norm(dim=-1).mean().detach().item(),
+                "actor/wm_target_norm": obs_hidden.float()[valid].norm(dim=-1).mean().detach().item(),
+            }
+        return latent_loss, metrics
+
+    def _sync_world_model_gradients(self):
+        if self.world_model_predictor is None:
+            return
+        if not dist.is_available() or not dist.is_initialized() or dist.get_world_size() == 1:
+            return
+        world_size = dist.get_world_size()
+        for parameter in self.world_model_predictor.parameters():
+            if parameter.grad is None:
+                continue
+            dist.all_reduce(parameter.grad, op=dist.ReduceOp.SUM)
+            parameter.grad.div_(world_size)
+
+    def _clip_world_model_grad_norm(self):
+        self._last_world_model_grad_norm = None
+        if self.world_model_predictor is None:
+            return None
+        parameters = [parameter for parameter in self.world_model_predictor.parameters() if parameter.grad is not None]
+        if not parameters:
+            device = self._first_actor_parameter().device
+            self._last_world_model_grad_norm = torch.zeros((), device=device)
+            return self._last_world_model_grad_norm
+        grad_norm = torch.nn.utils.clip_grad_norm_(parameters, max_norm=self.config.grad_clip)
+        self._last_world_model_grad_norm = grad_norm.detach()
+        return grad_norm
 
     def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -241,9 +450,13 @@ class DataParallelPPOActor(BasePPOActor):
         else:
             grad_norm = torch.nn.utils.clip_grad_norm_(self.actor_module.parameters(), max_norm=self.config.grad_clip)
 
+        grad_norm_is_finite = torch.isfinite(grad_norm)
+        if self._last_world_model_grad_norm is not None:
+            grad_norm_is_finite = grad_norm_is_finite & torch.isfinite(self._last_world_model_grad_norm.to(device=grad_norm.device))
+
         # if grad_norm is not finite, skip the update
-        if not torch.isfinite(grad_norm):
-            print(f"WARN: rank {torch.distributed.get_rank()} grad_norm is not finite: {grad_norm}")
+        if not grad_norm_is_finite:
+            print(f"WARN: rank {torch.distributed.get_rank()} grad_norm is not finite: {grad_norm}, world_model_grad_norm: {self._last_world_model_grad_norm}")
             self.actor_optimizer.zero_grad()
         else:
             self.actor_optimizer.step()
@@ -322,6 +535,16 @@ class DataParallelPPOActor(BasePPOActor):
         multi_turn = data.meta_info.get("multi_turn", False)
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
+        world_model_keys = [
+            "wm_input_ids",
+            "wm_attention_mask",
+            "wm_position_ids",
+            "wm_action_end_idx",
+            "wm_obs_end_idx",
+            "wm_loss_mask",
+        ]
+        if self.world_model_predictor is not None and all(key in data.batch.keys() for key in world_model_keys):
+            select_keys.extend(world_model_keys)
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
@@ -425,6 +648,12 @@ class DataParallelPPOActor(BasePPOActor):
                         metrics["actor/kl_loss"] = kl_loss.detach().item()
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
 
+                    latent_loss, world_model_metrics = self._compute_latent_world_model_loss(data)
+                    if latent_loss is not None:
+                        policy_loss = policy_loss + latent_loss * self.world_model_loss_coef
+                        world_model_metrics["actor/wm_coef"] = self.world_model_loss_coef
+                        append_to_dict(metrics, world_model_metrics)
+
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
                         loss = policy_loss * (len(data) / self.config.ppo_mini_batch_size)
@@ -440,8 +669,12 @@ class DataParallelPPOActor(BasePPOActor):
                     }
                     append_to_dict(metrics, data)
 
+                self._sync_world_model_gradients()
+                self._clip_world_model_grad_norm()
                 grad_norm = self._optimizer_step()
                 data = {"actor/grad_norm": grad_norm.detach().item()}
+                if self._last_world_model_grad_norm is not None:
+                    data["actor/wm_grad_norm"] = self._last_world_model_grad_norm.detach().item()
                 append_to_dict(metrics, data)
         self.actor_optimizer.zero_grad()
         return metrics
