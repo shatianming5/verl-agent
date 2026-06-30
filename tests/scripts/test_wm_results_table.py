@@ -293,6 +293,35 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    smoke_log = logs_dir / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_smoke_20260630_010203.log"
+    smoke_log.write_text(
+        "\n".join(
+            [
+                "RUN_ALFWORLD_OFFICIAL seed=0 tag=wm_obs_ce_smoke cuda=4,5 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_smoke",
+                "Training Progress: 3/150",
+                "val/success_rate:0.100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    smoke_diagnostics_dir = logs_dir / "world_model_diagnostics" / "wm_ckpt_diag_seed0_smoke_20260630"
+    smoke_diagnostics_dir.mkdir()
+    (smoke_diagnostics_dir / "checkpoint_scores_summary.json").write_text(
+        json.dumps(
+            {
+                "transition_jsonl": "/work/logs/world_model_rollouts/smoke/3.wm_transitions.jsonl",
+                "checkpoints": [
+                    {
+                        "checkpoint_label": "smoke",
+                        "checkpoint_step": "3",
+                        "token_mean_ce": 9.9,
+                        "row_mean_action_obs_cosine": 0.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     output_md = tmp_path / "report.md"
     output_csv = tmp_path / "report.csv"
 
@@ -326,3 +355,5 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     assert row["train_step"] == "150"
     assert row["diagnostic_token_mean_ce"] == "1.4"
     assert row["diagnostic_delta_token_mean_ce"] == "-0.4"
+    assert "smoke" not in row["train_log_path"]
+    assert "smoke" not in row["diagnostic_summary_path"]

@@ -134,6 +134,19 @@ def standard_layout_globs(work_root: str) -> tuple[list[str], list[str], list[st
     )
 
 
+def discover_standard_layout_paths(work_root: str) -> tuple[list[str], list[str], list[str]]:
+    eval_globs, train_log_globs, diagnostic_globs = standard_layout_globs(work_root)
+    return (
+        exclude_smoke_paths(expand_paths([], eval_globs)),
+        exclude_smoke_paths(expand_paths([], train_log_globs)),
+        exclude_smoke_paths(expand_paths([], diagnostic_globs)),
+    )
+
+
+def exclude_smoke_paths(paths: list[str]) -> list[str]:
+    return [path for path in paths if "smoke" not in str(Path(path)).lower()]
+
+
 def coerce_float(value: Any) -> float | None:
     if value in ("", None):
         return None
@@ -709,10 +722,10 @@ def write_text(path: str, text: str) -> None:
 def main() -> None:
     args = parse_args()
     if args.discover_standard_layout:
-        eval_globs, train_log_globs, diagnostic_globs = standard_layout_globs(args.work_root)
-        args.eval_glob.extend(eval_globs)
-        args.train_log_glob.extend(train_log_globs)
-        args.diagnostic_glob.extend(diagnostic_globs)
+        eval_paths, train_log_paths, diagnostic_paths = discover_standard_layout_paths(args.work_root)
+        args.eval_result.extend(eval_paths)
+        args.train_log.extend(train_log_paths)
+        args.diagnostic_summary.extend(diagnostic_paths)
     eval_paths = expand_paths(args.eval_result, args.eval_glob)
     train_logs = expand_paths(args.train_log, args.train_log_glob)
     diagnostic_paths = expand_paths(args.diagnostic_summary, args.diagnostic_glob)
