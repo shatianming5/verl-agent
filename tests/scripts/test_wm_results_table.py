@@ -191,6 +191,53 @@ def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
     assert "CKPT=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150" in markdown
 
 
+def test_merged_train_logs_keep_latest_checkpoint_step_and_path_paired(tmp_path):
+    module = _load_module()
+    checkpoint_root = "/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlat_l0p001_s0"
+    older_log = tmp_path / "older.log"
+    older_log.write_text(
+        "\n".join(
+            [
+                f"RUN_ALFWORLD_OFFICIAL seed=0 tag=wmlat_l0p001_s0 cuda=0,3 ckpt={checkpoint_root}",
+                "Training Progress: 120/150",
+                f"saved {checkpoint_root}/global_step_120",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    newer_log = tmp_path / "newer.log"
+    newer_log.write_text(
+        "\n".join(
+            [
+                f"RUN_ALFWORLD_OFFICIAL seed=0 tag=wmlat_l0p001_s0 cuda=0,3 ckpt={checkpoint_root}",
+                "Training Progress: 150/150",
+                f"saved {checkpoint_root}/global_step_150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    for train_logs in ([str(older_log), str(newer_log)], [str(newer_log), str(older_log)]):
+        rows = module.build_records(eval_paths=[], train_logs=train_logs, diagnostic_paths=[])
+        module.annotate_eval_readiness(
+            rows,
+            eval_cuda="4,5",
+            eval_n="10",
+            eval_script="/root/grpo/eval10x_alfworld.sh",
+        )
+
+        row = rows[0]
+        assert row["latest_checkpoint_step"] == 150
+        assert row["latest_checkpoint_path"] == f"{checkpoint_root}/global_step_150"
+        assert row["eval_target_checkpoint_path"] == f"{checkpoint_root}/global_step_150"
+        assert row["eval_readiness"] == "ready_for_eval"
+        assert "global_step_150" in row["eval_command"]
+        assert "global_step_120" not in row["eval_command"]
+        assert ";" not in row["latest_checkpoint_path"]
+        assert ";" not in row["eval_target_checkpoint_path"]
+        assert ";" not in row["eval_command"]
+
+
 def test_annotate_train_commands_generates_standard_goal_rd_commands():
     module = _load_module()
     rows = [

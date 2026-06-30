@@ -762,10 +762,38 @@ def append_unique(existing: Any, value: Any) -> str:
     return ";".join(parts)
 
 
-def first_path(value: Any) -> str:
+def path_parts(value: Any) -> list[str]:
     if value in ("", None):
+        return []
+    return [part for part in str(value).split(";") if part]
+
+
+def first_path(value: Any) -> str:
+    parts = path_parts(value)
+    return parts[0] if parts else ""
+
+
+def checkpoint_step_from_path(path: str) -> int | None:
+    match = re.search(r"(?:^|/)global_step_(\d+)(?:/|$)", path)
+    return int(match.group(1)) if match else None
+
+
+def checkpoint_path_for_step(value: Any, step: int | None) -> str:
+    parts = path_parts(value)
+    if not parts:
         return ""
-    return str(value).split(";", 1)[0]
+    if step is not None:
+        for path in parts:
+            if checkpoint_step_from_path(path) == step:
+                return path
+    stepped_paths = [
+        (checkpoint_step, -index, path)
+        for index, path in enumerate(parts)
+        if (checkpoint_step := checkpoint_step_from_path(path)) is not None
+    ]
+    if stepped_paths:
+        return max(stepped_paths)[2]
+    return parts[0]
 
 
 def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> None:
@@ -778,9 +806,32 @@ def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> Non
     for key, value in row.items():
         if key in {"run_key", "method", "objective", "tag", "seed", "lambda_obs", "lambda_latent"} or value in ("", None):
             continue
-        if key.endswith("_path") or key in {"train_log_path", "diagnostic_summary_path"}:
+        if key == "latest_checkpoint_path":
+            incoming_step = coerce_int(row.get("latest_checkpoint_step"))
+            current_step = coerce_int(record.get("latest_checkpoint_step"))
+            checkpoint_path = checkpoint_path_for_step(value, incoming_step)
+            if not checkpoint_path:
+                continue
+            if current_step is not None and incoming_step is None:
+                if not record.get(key):
+                    record[key] = checkpoint_path
+            elif incoming_step is None or current_step is None or incoming_step >= current_step:
+                record[key] = checkpoint_path
+        elif key.endswith("_path") or key in {"train_log_path", "diagnostic_summary_path"}:
             record[key] = append_unique(record.get(key, ""), value)
-        elif key in {"train_step", "train_total_steps", "latest_checkpoint_step", "eval_n", "diagnostic_final_step"}:
+        elif key == "latest_checkpoint_step":
+            current = coerce_int(record.get(key))
+            incoming = coerce_int(value)
+            if current is None or (incoming is not None and incoming > current):
+                record[key] = value
+                checkpoint_path = checkpoint_path_for_step(row.get("latest_checkpoint_path"), incoming)
+                if checkpoint_path:
+                    record["latest_checkpoint_path"] = checkpoint_path
+            elif incoming is not None and incoming == current and not record.get("latest_checkpoint_path"):
+                checkpoint_path = checkpoint_path_for_step(row.get("latest_checkpoint_path"), incoming)
+                if checkpoint_path:
+                    record["latest_checkpoint_path"] = checkpoint_path
+        elif key in {"train_step", "train_total_steps", "eval_n", "diagnostic_final_step"}:
             current = coerce_int(record.get(key))
             incoming = coerce_int(value)
             if current is None or (incoming is not None and incoming > current):
@@ -823,7 +874,7 @@ def build_records(
 
 
 def build_eval_command(row: dict[str, Any], eval_cuda: str, eval_n: str, eval_script: str) -> str:
-    checkpoint_path = str(row.get("latest_checkpoint_path") or "")
+    checkpoint_path = checkpoint_path_for_step(row.get("latest_checkpoint_path"), coerce_int(row.get("latest_checkpoint_step")))
     if not checkpoint_path:
         return ""
     label = str(row.get("tag") or row.get("run_key") or "world_model_run")
@@ -860,15 +911,11 @@ def build_train_command(row: dict[str, Any], train_cuda: str, train_script: str,
 
 def checkpoint_path_from_row(row: dict[str, Any]) -> str:
     for key in ("latest_checkpoint_path", "eval_target_checkpoint_path", "eval_checkpoint_path"):
-        checkpoint_path = first_path(row.get(key))
+        step = coerce_int(row.get("latest_checkpoint_step")) if key == "latest_checkpoint_path" else coerce_int(row.get("checkpoint_step"))
+        checkpoint_path = checkpoint_path_for_step(row.get(key), step)
         if checkpoint_path:
             return checkpoint_path
     return ""
-
-
-def checkpoint_step_from_path(path: str) -> int | None:
-    match = re.search(r"(?:^|/)global_step_(\d+)(?:/|$)", path)
-    return int(match.group(1)) if match else None
 
 
 def checkpoint_root_from_row(row: dict[str, Any]) -> str:
@@ -889,7 +936,8 @@ def has_diagnostic_target_checkpoint(row: dict[str, Any], transition_step: str) 
     if target_step is None:
         return True
     for key in ("latest_checkpoint_path", "eval_target_checkpoint_path", "eval_checkpoint_path"):
-        checkpoint_step = checkpoint_step_from_path(first_path(row.get(key)))
+        step = coerce_int(row.get("latest_checkpoint_step")) if key == "latest_checkpoint_path" else coerce_int(row.get("checkpoint_step"))
+        checkpoint_step = checkpoint_step_from_path(checkpoint_path_for_step(row.get(key), step))
         if checkpoint_step is not None and checkpoint_step >= target_step:
             return True
     latest_step = coerce_int(row.get("latest_checkpoint_step"))
@@ -960,16 +1008,22 @@ def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: 
         if coerce_float(row.get("eval_mean")) is not None:
             row["eval_readiness"] = "evaluated"
             row["eval_command"] = ""
-            row["eval_target_checkpoint_path"] = str(row.get("eval_checkpoint_path") or "")
+            row["eval_target_checkpoint_path"] = checkpoint_path_for_step(
+                row.get("eval_checkpoint_path"),
+                coerce_int(row.get("checkpoint_step")),
+            )
             continue
         if row.get("eval_result_path"):
             row["eval_readiness"] = "eval_incomplete"
             row["eval_command"] = ""
-            row["eval_target_checkpoint_path"] = str(row.get("eval_checkpoint_path") or "")
+            row["eval_target_checkpoint_path"] = checkpoint_path_for_step(
+                row.get("eval_checkpoint_path"),
+                coerce_int(row.get("checkpoint_step")),
+            )
             continue
 
         latest_checkpoint_step = coerce_int(row.get("latest_checkpoint_step"))
-        latest_checkpoint_path = str(row.get("latest_checkpoint_path") or "")
+        latest_checkpoint_path = checkpoint_path_for_step(row.get("latest_checkpoint_path"), latest_checkpoint_step)
         if latest_checkpoint_step is not None and latest_checkpoint_step >= 150 and latest_checkpoint_path:
             row["eval_readiness"] = "ready_for_eval"
             row["eval_command"] = build_eval_command(row, eval_cuda=eval_cuda, eval_n=eval_n, eval_script=eval_script)
@@ -1079,7 +1133,7 @@ def render_eval_cell(row: dict[str, Any]) -> str:
 
 
 def format_checkpoint(row: dict[str, Any]) -> str:
-    return str(row.get("latest_checkpoint_path") or row.get("eval_checkpoint_path") or "")
+    return checkpoint_path_from_row(row)
 
 
 def average(values: list[float]) -> float | None:
