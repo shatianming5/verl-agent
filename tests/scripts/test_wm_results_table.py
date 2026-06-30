@@ -779,7 +779,13 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
                     },
                 ],
                 "provenance": {
+                    "argv": [
+                        "wm_score_transition_dump.py",
+                        "--model-path",
+                        "/model",
+                    ],
                     "command": "python scripts/wm_score_transition_dump.py --model-path /model",
+                    "cwd": "/work/verl-agent",
                     "model_path": "/model",
                     "output_csv": "/work/logs/world_model_diagnostics/wm_obs_ce_l0p01_s0/checkpoint_scores.csv",
                     "checkpoint_count": 2,
@@ -788,6 +794,9 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
                     "max_rows": 0,
                     "device": "cuda:0",
                     "dtype": "bfloat16",
+                    "skip_entropy": True,
+                    "chat_template_kwargs_json": '{"enable_thinking": false}',
+                    "chat_template_kwargs": {"enable_thinking": False},
                 },
                 "success_buckets": [
                     {
@@ -839,6 +848,16 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     assert row["diagnostic_batch_size"] == 4
     assert row["diagnostic_device"] == "cuda:0"
     assert row["diagnostic_dtype"] == "bfloat16"
+    assert row["diagnostic_skip_entropy"] is True
+    assert row["diagnostic_chat_template_kwargs_json"] == '{"enable_thinking": false}'
+    assert row["diagnostic_chat_template_kwargs"] == '{"enable_thinking":false}'
+    assert row["diagnostic_cwd"] == "/work/verl-agent"
+    assert row["diagnostic_argv"] == '["wm_score_transition_dump.py","--model-path","/model"]'
+
+    markdown = module.render_markdown([row])
+    assert "- Diagnostic cwd: `/work/verl-agent`" in markdown
+    assert "- Diagnostic chat template kwargs: `{\"enable_thinking\": false}`" in markdown
+    assert '- Diagnostic argv: `["wm_score_transition_dump.py","--model-path","/model"]`' in markdown
 
 
 def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path):

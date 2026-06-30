@@ -91,6 +91,11 @@ CSV_COLUMNS = [
     "diagnostic_max_rows",
     "diagnostic_device",
     "diagnostic_dtype",
+    "diagnostic_skip_entropy",
+    "diagnostic_chat_template_kwargs_json",
+    "diagnostic_chat_template_kwargs",
+    "diagnostic_cwd",
+    "diagnostic_argv",
     "train_log_path",
     "launch_line",
     "command_summary",
@@ -721,7 +726,9 @@ def diagnostic_provenance_fields(summary: dict[str, Any]) -> dict[str, Any]:
     if checkpoint_count == "" and isinstance(checkpoints, list):
         checkpoint_count = len(checkpoints)
     return {
+        "diagnostic_argv": serialize_provenance_value(provenance.get("argv", "")),
         "diagnostic_command": provenance.get("command", ""),
+        "diagnostic_cwd": provenance.get("cwd", ""),
         "diagnostic_model_path": provenance.get("model_path", ""),
         "diagnostic_output_csv_path": provenance.get("output_csv", ""),
         "diagnostic_checkpoint_count": checkpoint_count,
@@ -730,7 +737,16 @@ def diagnostic_provenance_fields(summary: dict[str, Any]) -> dict[str, Any]:
         "diagnostic_max_rows": provenance.get("max_rows", ""),
         "diagnostic_device": provenance.get("device", ""),
         "diagnostic_dtype": provenance.get("dtype", ""),
+        "diagnostic_skip_entropy": provenance.get("skip_entropy", ""),
+        "diagnostic_chat_template_kwargs_json": provenance.get("chat_template_kwargs_json", ""),
+        "diagnostic_chat_template_kwargs": serialize_provenance_value(provenance.get("chat_template_kwargs", "")),
     }
+
+
+def serialize_provenance_value(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return value
 
 
 def empty_record(run_key: str) -> dict[str, Any]:
@@ -1567,6 +1583,16 @@ def render_markdown(
                 lines.append(f"- {title}: `{value}`")
         for key, title in (
             ("diagnostic_model_path", "Diagnostic model"),
+            ("diagnostic_cwd", "Diagnostic cwd"),
+            ("diagnostic_checkpoint_count", "Diagnostic checkpoint count"),
+            ("diagnostic_max_length", "Diagnostic max length"),
+            ("diagnostic_batch_size", "Diagnostic batch size"),
+            ("diagnostic_max_rows", "Diagnostic max rows"),
+            ("diagnostic_device", "Diagnostic device"),
+            ("diagnostic_dtype", "Diagnostic dtype"),
+            ("diagnostic_skip_entropy", "Diagnostic skip entropy"),
+            ("diagnostic_chat_template_kwargs_json", "Diagnostic chat template kwargs"),
+            ("diagnostic_argv", "Diagnostic argv"),
             ("diagnostic_command", "Diagnostic command"),
         ):
             value = row.get(key, "")
