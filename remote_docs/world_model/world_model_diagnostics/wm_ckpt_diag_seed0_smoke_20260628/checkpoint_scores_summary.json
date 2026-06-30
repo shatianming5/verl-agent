@@ -1,0 +1,39 @@
+{
+  "checkpoints": [
+    {
+      "checkpoint_label": "grpo_qwen2.5_1.5b_alfworld_seed0_official_4to5_init",
+      "checkpoint_path": "base",
+      "checkpoint_step": "init",
+      "row_mean_action_hidden_norm": 206.16400146484375,
+      "row_mean_action_obs_cosine": 0.6106433868408203,
+      "row_mean_ce": 1.573041002575167,
+      "row_mean_obs_hidden_norm": 169.1125030517578,
+      "row_mean_target_confidence": 0.6554669737815857,
+      "row_mean_target_entropy": "",
+      "rows": 1,
+      "rows_with_targets": 1,
+      "target_tokens": 449,
+      "token_mean_ce": 1.573041002575167,
+      "token_mean_perplexity": 4.821287471068714
+    },
+    {
+      "checkpoint_label": "grpo_qwen2.5_1.5b_alfworld_seed0_official_4to5_step30",
+      "checkpoint_path": "/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_official_4to5/global_step_30",
+      "checkpoint_step": "30",
+      "row_mean_action_hidden_norm": 209.58775329589844,
+      "row_mean_action_obs_cosine": 0.6562040448188782,
+      "row_mean_ce": 1.5281987859305401,
+      "row_mean_obs_hidden_norm": 169.39675903320312,
+      "row_mean_target_confidence": 0.6521636247634888,
+      "row_mean_target_entropy": "",
+      "rows": 1,
+      "rows_with_targets": 1,
+      "target_tokens": 449,
+      "token_mean_ce": 1.5281987859305401,
+      "token_mean_perplexity": 4.609865984278342
+    }
+  ],
+  "max_length": 512,
+  "rows": 1,
+  "transition_jsonl": "/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl"
+}

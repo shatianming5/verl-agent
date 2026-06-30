@@ -10,15 +10,20 @@ This directory mirrors the current small report artifacts from gpudev for offlin
   - `world_model_diagnostics/wm_ckpt_diag_seed0_official_full_20260628/checkpoint_diagnostics_report.csv`
   - `world_model_diagnostics/wm_ckpt_diag_seed0_official_full_20260628/checkpoint_diagnostics_report.md`
   - `world_model_diagnostics/wm_ckpt_diag_seed0_official_full_20260628/checkpoint_diagnostics_report.svg`
+  - `world_model_diagnostics/wm_ckpt_diag_seed0_official_full_20260628/checkpoint_scores_summary.json`
+  - `world_model_diagnostics/wm_ckpt_diag_seed0_smoke_20260628/checkpoint_scores_summary.json`
   - `world_model_diagnostics/wm_obs_ce_l0p01_s0/checkpoint_diagnostics_report.csv`
   - `world_model_diagnostics/wm_obs_ce_l0p01_s0/checkpoint_diagnostics_report.md`
   - `world_model_diagnostics/wm_obs_ce_l0p01_s0/checkpoint_diagnostics_report.svg`
+  - `world_model_diagnostics/wm_obs_ce_l0p01_s0/checkpoint_scores_summary.json`
   - `world_model_diagnostics/wm_obs_ce_l0p01_s1/checkpoint_diagnostics_report.csv`
   - `world_model_diagnostics/wm_obs_ce_l0p01_s1/checkpoint_diagnostics_report.md`
   - `world_model_diagnostics/wm_obs_ce_l0p01_s1/checkpoint_diagnostics_report.svg`
+  - `world_model_diagnostics/wm_obs_ce_l0p01_s1/checkpoint_scores_summary.json`
   - `world_model_diagnostics/wmlat_l0p001_s0/checkpoint_diagnostics_report.csv`
   - `world_model_diagnostics/wmlat_l0p001_s0/checkpoint_diagnostics_report.md`
   - `world_model_diagnostics/wmlat_l0p001_s0/checkpoint_diagnostics_report.svg`
+  - `world_model_diagnostics/wmlat_l0p001_s0/checkpoint_scores_summary.json`
   - `world_model_results.csv`
   - `world_model_results.md`
 
