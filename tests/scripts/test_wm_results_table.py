@@ -402,6 +402,58 @@ def test_result_summary_groups_eval_by_objective_and_lambda():
     assert "| obs_ce lambda_obs=0.01 | obs_ce | 0.01 |  | 2 | 2 | 0,1 | 0.7400 | 0.0141 | 0.0400 | 0.0300 |" in markdown
 
 
+def test_goal_rd_deliverable_status_maps_report_requirements():
+    module = _load_module()
+    rows = [
+        {
+            "run_key": "grpo_baseline_s0",
+            "objective": "grpo_baseline",
+            "seed": "0",
+            "eval_mean": 0.70,
+            "train_log_path": "/work/logs/baseline.log",
+            "eval_readiness": "evaluated",
+            "diagnostic_readiness": "diagnosed",
+            "diagnostic_summary_path": "/work/logs/world_model_diagnostics/base/checkpoint_scores_summary.json",
+        },
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "seed": "0",
+            "lambda_obs": "0.01",
+            "eval_mean": 0.73,
+            "train_log_path": "/work/logs/obs.log",
+            "eval_readiness": "evaluated",
+            "diagnostic_readiness": "diagnosed",
+            "diagnostic_token_mean_ce": 1.4,
+            "diagnostic_success_failure_ce_gap": 0.2,
+        },
+        {
+            "run_key": "latent_l0p001_s0",
+            "objective": "latent",
+            "seed": "0",
+            "lambda_latent": "0.001",
+            "expected": "yes",
+            "eval_readiness": "waiting_for_checkpoint",
+            "diagnostic_readiness": "waiting_for_checkpoint",
+        },
+    ]
+
+    status = dict(module.goal_rd_deliverable_status(rows, branch="world-model-latent-objective"))
+
+    assert status["Branch name"] == "world-model-latent-objective"
+    assert status["Result table status"].startswith("0/1 tracked run(s) have eval results")
+    assert "waiting_for_checkpoint" in status["Result table status"]
+    assert "Raw observation CE: positive so far" in status["Raw observation CE interpretation"]
+    assert "evidence available" in status["World-model feature interpretation"]
+    assert status["Latent alignment interpretation"] == "Latent alignment: pending; no latent eval10x result is available yet."
+
+    markdown = module.render_markdown(rows, branch="world-model-latent-objective")
+    assert "## GOAL_RD Deliverable Status" in markdown
+    assert "- Branch name: `world-model-latent-objective`" in markdown
+    assert "- Exact commands/configs: `per-run launch lines" in markdown
+    assert "- Training log coverage: `0/1 tracked run(s) have training logs`" in markdown
+
+
 def test_expected_run_coverage_reports_missing_artifacts():
     module = _load_module()
 

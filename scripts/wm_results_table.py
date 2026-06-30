@@ -1140,6 +1140,123 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(result, key=lambda row: (order.get(str(row["objective"]), 8), str(row["objective"])))
 
 
+def row_has_eval(row: dict[str, Any]) -> bool:
+    return bool(row.get("eval_result_path") or coerce_float(row.get("eval_mean")) is not None)
+
+
+def row_has_diagnostic(row: dict[str, Any]) -> bool:
+    return bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+
+
+def objective_eval_values(rows: list[dict[str, Any]], objective: str) -> list[float]:
+    return [
+        value
+        for row in rows
+        if str(row.get("objective") or "") == objective
+        for value in [coerce_float(row.get("eval_mean"))]
+        if value is not None
+    ]
+
+
+def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, label: str) -> str:
+    baseline_values = objective_eval_values(rows, "grpo_baseline")
+    objective_values = objective_eval_values(rows, objective)
+    baseline_mean = average(baseline_values)
+    objective_mean = average(objective_values)
+    if baseline_mean is None or objective_mean is None:
+        return (
+            f"{label}: pending; evaluated baseline runs={len(baseline_values)}, "
+            f"evaluated {objective} runs={len(objective_values)}."
+        )
+
+    delta = objective_mean - baseline_mean
+    if delta > 0.005:
+        direction = "positive so far"
+    elif delta < -0.005:
+        direction = "negative so far"
+    else:
+        direction = "roughly tied so far"
+    return (
+        f"{label}: {direction}; mean eval {objective_mean:.4f} vs baseline "
+        f"{baseline_mean:.4f}, delta {delta:+.4f}."
+    )
+
+
+def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
+    diagnostic_rows = [row for row in rows if row_has_diagnostic(row)]
+    gap_rows = [
+        row
+        for row in diagnostic_rows
+        if row.get("diagnostic_success_failure_ce_gap") not in ("", None)
+        or row.get("diagnostic_success_failure_cosine_gap") not in ("", None)
+    ]
+    if not diagnostic_rows:
+        return "Observation prediction features: pending; no checkpoint diagnostic summaries yet."
+    if gap_rows:
+        return (
+            "Observation prediction features: evidence available; success/failure CE or "
+            f"cosine gaps are reported for {len(gap_rows)} diagnostic run(s)."
+        )
+    return (
+        "Observation prediction features: partial evidence available; checkpoint diagnostics exist, "
+        "but success/failure gap fields are not populated."
+    )
+
+
+def latent_interpretation(rows: list[dict[str, Any]]) -> str:
+    latent_eval_count = len(objective_eval_values(rows, "latent"))
+    latent_diagnostic_count = sum(1 for row in rows if str(row.get("objective") or "") == "latent" and row_has_diagnostic(row))
+    if latent_eval_count == 0:
+        return "Latent alignment: pending; no latent eval10x result is available yet."
+    if latent_diagnostic_count == 0:
+        return "Latent alignment: eval evidence exists, but latent checkpoint diagnostics are still pending."
+    return (
+        "Latent alignment: eval and diagnostic evidence are available; compare latent rows "
+        "against raw CE and baseline in the result summary."
+    )
+
+
+def goal_rd_deliverable_status(
+    rows: list[dict[str, Any]],
+    branch: str = "",
+) -> list[tuple[str, str]]:
+    expected_rows = [row for row in rows if row.get("expected") == "yes"]
+    tracked_rows = expected_rows or rows
+    expected_count = len(tracked_rows)
+    train_count = sum(1 for row in tracked_rows if row.get("train_log_path"))
+    eval_count = sum(1 for row in tracked_rows if row_has_eval(row))
+    diagnostic_count = sum(1 for row in tracked_rows if row_has_diagnostic(row))
+    eval_readiness = Counter(str(row.get("eval_readiness") or "unknown") for row in tracked_rows)
+    diagnostic_readiness = Counter(str(row.get("diagnostic_readiness") or "unknown") for row in tracked_rows)
+
+    return [
+        ("Branch name", branch or "(unknown)"),
+        (
+            "Code/config summary",
+            "obs CE objective, latent hidden-state objective, rollout transition dumps, "
+            "checkpoint diagnostics, and report aggregation are tracked in this branch",
+        ),
+        (
+            "Exact commands/configs",
+            "per-run launch lines and generated train/eval/diagnostic commands are listed in Artifact Paths",
+        ),
+        (
+            "Result table status",
+            f"{eval_count}/{expected_count} tracked run(s) have eval results; eval readiness "
+            f"{dict(sorted(eval_readiness.items()))}",
+        ),
+        (
+            "Diagnostic paths status",
+            f"{diagnostic_count}/{expected_count} tracked run(s) have checkpoint diagnostics; "
+            f"diagnostic readiness {dict(sorted(diagnostic_readiness.items()))}",
+        ),
+        ("Raw observation CE interpretation", objective_eval_interpretation(rows, "obs_ce", "Raw observation CE")),
+        ("World-model feature interpretation", diagnostic_interpretation(rows)),
+        ("Latent alignment interpretation", latent_interpretation(rows)),
+        ("Training log coverage", f"{train_count}/{expected_count} tracked run(s) have training logs"),
+    ]
+
+
 def build_report_generation_metadata(
     args: argparse.Namespace,
     eval_paths: list[str],
@@ -1190,6 +1307,12 @@ def render_markdown(
         for title, value in report_generation:
             lines.append(f"- {title}: `{value}`")
         lines.append("")
+
+    lines.append("## GOAL_RD Deliverable Status")
+    lines.append("")
+    for title, value in goal_rd_deliverable_status(rows, branch=branch):
+        lines.append(f"- {title}: `{value}`")
+    lines.append("")
 
     columns = [
         ("run_key", "run"),
