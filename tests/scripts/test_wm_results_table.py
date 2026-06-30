@@ -17,6 +17,16 @@ def _load_module():
     return module
 
 
+def _complete_eval(mean=0.70, std=0.02, n="10", step="150", dataset="eval_in_distribution"):
+    return {
+        "eval_mean": mean,
+        "eval_std": std,
+        "eval_n": n,
+        "checkpoint_step": step,
+        "eval_dataset": dataset,
+    }
+
+
 def test_parse_eval_result_infers_obs_ce_metadata(tmp_path):
     module = _load_module()
     result_path = tmp_path / "eval10x_wm_obs_ce_l0p01_s0_results.txt"
@@ -72,6 +82,25 @@ def test_incomplete_eval_file_does_not_count_as_eval_result(tmp_path):
     assert row["final_report_readiness"] == "missing:eval,diagnostic"
     assert status["Result table status"].startswith("0/1 tracked run(s) have eval results")
     assert "eval_incomplete" in status["Result table status"]
+
+
+def test_eval_completeness_requires_n_step_and_dataset():
+    module = _load_module()
+    complete = {"run_key": "obs_ce_l0p01_s0", **_complete_eval(mean=0.74)}
+    wrong_n = complete | {"eval_n": "1"}
+    wrong_step = complete | {"checkpoint_step": "60"}
+    wrong_dataset = complete | {"eval_dataset": "eval_out_of_distribution"}
+
+    assert module.row_has_eval(complete)
+    assert not module.row_has_eval(wrong_n)
+    assert not module.row_has_eval(wrong_step)
+    assert not module.row_has_eval(wrong_dataset)
+
+    rows = [wrong_n | {"expected": "yes", "train_log_path": "/work/logs/train.log", "eval_readiness": "evaluated"}]
+    module.annotate_artifact_coverage(rows)
+
+    assert rows[0]["has_eval"] == "no"
+    assert rows[0]["missing_artifacts"] == "eval,diagnostic"
 
 
 def test_parse_train_log_collects_progress_val_and_world_model_metrics(tmp_path):
@@ -196,7 +225,7 @@ def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
     }
     evaluated = {
         "run_key": "grpo_baseline_s0",
-        "eval_mean": 0.729,
+        **_complete_eval(mean=0.729, std=0.028),
         "latest_checkpoint_step": 150,
         "latest_checkpoint_path": "/work/checkpoints/grpo/global_step_150",
     }
@@ -530,6 +559,7 @@ def test_objective_coverage_summarizes_eval_and_diagnostics():
             "objective": "grpo_baseline",
             "seed": "0",
             "eval_readiness": "evaluated",
+            **_complete_eval(mean=0.70),
             "diagnostic_summary_path": "/work/diag/base.json",
             "diagnostic_final_step": "150",
             "diagnostic_token_mean_ce": 1.5,
@@ -581,10 +611,22 @@ def test_objective_coverage_summarizes_eval_and_diagnostics():
 def test_result_summary_groups_eval_by_objective_and_lambda():
     module = _load_module()
     rows = [
-        {"run_key": "grpo_baseline_s0", "objective": "grpo_baseline", "seed": "0", "eval_mean": 0.70, "eval_std": 0.02},
-        {"run_key": "grpo_baseline_s1", "objective": "grpo_baseline", "seed": "1", "eval_mean": 0.72, "eval_std": 0.04},
-        {"run_key": "obs_ce_l0p01_s0", "objective": "obs_ce", "seed": "0", "lambda_obs": "0.01", "eval_mean": 0.73, "eval_std": 0.03},
-        {"run_key": "obs_ce_l0p01_s1", "objective": "obs_ce", "seed": "1", "lambda_obs": "0.01", "eval_mean": 0.75, "eval_std": 0.05},
+        {"run_key": "grpo_baseline_s0", "objective": "grpo_baseline", "seed": "0", **_complete_eval(mean=0.70, std=0.02)},
+        {"run_key": "grpo_baseline_s1", "objective": "grpo_baseline", "seed": "1", **_complete_eval(mean=0.72, std=0.04)},
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "seed": "0",
+            "lambda_obs": "0.01",
+            **_complete_eval(mean=0.73, std=0.03),
+        },
+        {
+            "run_key": "obs_ce_l0p01_s1",
+            "objective": "obs_ce",
+            "seed": "1",
+            "lambda_obs": "0.01",
+            **_complete_eval(mean=0.75, std=0.05),
+        },
         {"run_key": "latent_l0p001_s0", "objective": "latent", "seed": "0", "lambda_latent": "0.001"},
     ]
 
@@ -615,7 +657,7 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "objective": "grpo_baseline",
             "seed": "0",
             "expected": "yes",
-            "eval_mean": 0.70,
+            **_complete_eval(mean=0.70),
             "train_log_path": "/work/logs/baseline.log",
             "eval_readiness": "evaluated",
             "diagnostic_readiness": "diagnosed",
@@ -630,7 +672,7 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "seed": "0",
             "expected": "yes",
             "lambda_obs": "0.01",
-            "eval_mean": 0.73,
+            **_complete_eval(mean=0.73),
             "train_log_path": "/work/logs/obs.log",
             "eval_readiness": "evaluated",
             "diagnostic_readiness": "diagnosed",
@@ -652,7 +694,7 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "run_key": "latent_s0",
             "objective": "latent",
             "seed": "0",
-            "eval_mean": 0.99,
+            **_complete_eval(mean=0.99),
             "eval_readiness": "evaluated",
             "diagnostic_readiness": "diagnosed",
         },
@@ -663,11 +705,12 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
     assert status["Branch name"] == "world-model-latent-objective"
     assert status["Result table status"].startswith("2/3 tracked run(s) have eval results")
     assert "waiting_for_checkpoint" in status["Result table status"]
-    assert "Raw observation CE: positive so far" in status["Raw observation CE interpretation"]
+    assert "obs_ce lambda_obs=0.01 positive so far" in status["Raw observation CE interpretation"]
+    assert "complete evals 1/1" in status["Raw observation CE interpretation"]
     assert "failure-success CE gap mean +0.2000 across 1 run(s) (1 positive, 0 negative)" in status[
         "World-model feature interpretation"
     ]
-    assert status["Latent alignment interpretation"] == "Latent alignment: pending; no latent eval10x result is available yet."
+    assert status["Latent alignment interpretation"] == "Latent alignment: pending; complete latent eval10x results 0/1."
 
     markdown = module.render_markdown(rows, branch="world-model-latent-objective")
     assert "## GOAL_RD Deliverable Status" in markdown
@@ -683,12 +726,12 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
 def test_latent_interpretation_summarizes_eval_and_diagnostic_deltas():
     module = _load_module()
     rows = [
-        {"run_key": "grpo_baseline_s0", "objective": "grpo_baseline", "eval_mean": 0.70},
-        {"run_key": "grpo_baseline_s1", "objective": "grpo_baseline", "eval_mean": 0.72},
+        {"run_key": "grpo_baseline_s0", "objective": "grpo_baseline", **_complete_eval(mean=0.70)},
+        {"run_key": "grpo_baseline_s1", "objective": "grpo_baseline", **_complete_eval(mean=0.72)},
         {
             "run_key": "latent_l0p001_s0",
             "objective": "latent",
-            "eval_mean": 0.66,
+            **_complete_eval(mean=0.66),
             "diagnostic_summary_path": "/work/logs/world_model_diagnostics/wmlat/checkpoint_scores_summary.json",
             "diagnostic_final_step": "150",
             "diagnostic_token_mean_ce": 1.42,
@@ -845,7 +888,7 @@ def test_expected_run_flags_blocking_metadata_conflicts():
             "objective": "obs_ce",
             "seed": "1",
             "lambda_obs": "0.03",
-            "eval_mean": 0.74,
+            **_complete_eval(mean=0.74),
             "diagnostic_final_step": "150",
             "diagnostic_token_mean_ce": 1.4,
             "diagnostic_action_obs_cosine": 0.3,
@@ -864,6 +907,74 @@ def test_expected_run_flags_blocking_metadata_conflicts():
 
     markdown = module.render_markdown(rows)
     assert "- Metadata conflicts: `seed=0!=1;lambda_obs=0.01!=0.03`" in markdown
+
+
+def test_merge_record_keeps_diagnostic_fields_from_best_step():
+    module = _load_module()
+    records = {}
+    module.merge_record(
+        records,
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.4,
+            "diagnostic_action_obs_cosine": 0.3,
+            "diagnostic_summary_path": "/work/diag/fresh/checkpoint_scores_summary.json",
+            "status": "diagnosed",
+        },
+    )
+    module.merge_record(
+        records,
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "diagnostic_final_step": "60",
+            "diagnostic_token_mean_ce": 9.9,
+            "diagnostic_action_obs_cosine": -0.3,
+            "diagnostic_summary_path": "/work/diag/stale/checkpoint_scores_summary.json",
+            "diagnostic_report_md_path": "/work/diag/stale/checkpoint_diagnostics_report.md",
+            "status": "diagnostic_incomplete",
+        },
+    )
+
+    row = records["obs_ce_l0p01_s0"]
+
+    assert row["diagnostic_final_step"] == "150"
+    assert row["diagnostic_token_mean_ce"] == 1.4
+    assert row["diagnostic_summary_path"] == "/work/diag/fresh/checkpoint_scores_summary.json"
+    assert row["status"] == "diagnosed"
+    assert row["diagnostic_report_md_path"] == ""
+
+
+def test_diagnostic_interpretation_uses_obs_ce_rows_only():
+    module = _load_module()
+    rows = [
+        {
+            "run_key": "grpo_baseline_s0",
+            "objective": "grpo_baseline",
+            "diagnostic_summary_path": "/work/diag/base/checkpoint_scores_summary.json",
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.5,
+            "diagnostic_action_obs_cosine": 0.2,
+            "diagnostic_success_failure_ce_gap": 9.9,
+        },
+        {
+            "run_key": "obs_ce_l0p01_s0",
+            "objective": "obs_ce",
+            "diagnostic_summary_path": "/work/diag/obs/checkpoint_scores_summary.json",
+            "diagnostic_final_step": "150",
+            "diagnostic_token_mean_ce": 1.1,
+            "diagnostic_action_obs_cosine": 0.4,
+            "diagnostic_success_failure_ce_gap": 0.2,
+        },
+    ]
+
+    interpretation = module.diagnostic_interpretation(rows)
+
+    assert "1/1 obs_ce run(s)" in interpretation
+    assert "failure-success CE gap mean +0.2000" in interpretation
+    assert "+9.9000" not in interpretation
 
 
 def test_goal_rd_expected_runs_cover_full_matrix():
@@ -1349,7 +1460,7 @@ def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path)
 
     row["expected"] = "yes"
     row["train_log_path"] = "/work/logs/train.log"
-    row["eval_mean"] = 0.72
+    row.update(_complete_eval(mean=0.72))
     module.annotate_artifact_coverage([row])
 
     assert row["has_diagnostic"] == "yes"
@@ -1453,7 +1564,7 @@ def test_incomplete_diagnostic_summary_does_not_count_as_complete(tmp_path):
         {
             "expected": "yes",
             "train_log_path": "/work/logs/train.log",
-            "eval_mean": 0.72,
+            **_complete_eval(mean=0.72),
             "tag": "wm_obs_ce_l0p01_s0",
             "latest_checkpoint_step": 150,
             "latest_checkpoint_path": str(checkpoint_root / "global_step_150"),

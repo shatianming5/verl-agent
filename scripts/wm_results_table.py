@@ -137,6 +137,8 @@ NUMERIC_COLUMNS = {
 
 METADATA_KEYS = ("method", "objective", "tag", "seed", "lambda_obs", "lambda_latent")
 BLOCKING_METADATA_KEYS = ("objective", "seed", "lambda_obs", "lambda_latent")
+DIAGNOSTIC_KEYS = tuple(key for key in CSV_COLUMNS if key.startswith("diagnostic_"))
+DIAGNOSTIC_STATUS_VALUES = {"diagnosed", "diagnostic_incomplete"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -957,6 +959,36 @@ def checkpoint_path_for_step(value: Any, step: int | None) -> str:
     return parts[0]
 
 
+def eval_checkpoint_step(row: dict[str, Any]) -> int | None:
+    step = coerce_int(row.get("checkpoint_step"))
+    if step is not None:
+        return step
+    for key in ("eval_checkpoint_path", "eval_target_checkpoint_path"):
+        step = checkpoint_step_from_path(checkpoint_path_for_step(row.get(key), None))
+        if step is not None:
+            return step
+    return None
+
+
+def has_complete_eval_result(
+    row: dict[str, Any],
+    target_n: int = 10,
+    target_step: int = 150,
+    dataset: str = "eval_in_distribution",
+) -> bool:
+    if coerce_float(row.get("eval_mean")) is None:
+        return False
+    eval_n = coerce_int(row.get("eval_n"))
+    if eval_n != target_n:
+        return False
+    checkpoint_step = eval_checkpoint_step(row)
+    if checkpoint_step != target_step:
+        return False
+    if dataset and str(row.get("eval_dataset") or "") != dataset:
+        return False
+    return True
+
+
 def metadata_values_conflict(key: str, existing: Any, incoming: Any) -> bool:
     if existing in ("", None) or incoming in ("", None):
         return False
@@ -973,6 +1005,49 @@ def record_metadata_conflict(record: dict[str, Any], key: str, existing: Any, in
     record["metadata_conflicts"] = append_unique(record.get("metadata_conflicts", ""), conflict)
 
 
+def has_diagnostic_fields(row: dict[str, Any]) -> bool:
+    return any(row.get(key) not in ("", None) for key in DIAGNOSTIC_KEYS)
+
+
+def populated_diagnostic_field_count(row: dict[str, Any]) -> int:
+    return sum(1 for key in DIAGNOSTIC_KEYS if row.get(key) not in ("", None))
+
+
+def diagnostic_merge_rank(row: dict[str, Any]) -> tuple[int, int, int]:
+    if not has_diagnostic_fields(row):
+        return (-1, -1, 0)
+    complete = 1 if has_complete_diagnostic_result(row) else 0
+    step = coerce_int(row.get("diagnostic_final_step"))
+    return (complete, -1 if step is None else step, populated_diagnostic_field_count(row))
+
+
+def replace_diagnostic_status(existing: Any, incoming: Any) -> str:
+    incoming_status = str(incoming or "")
+    if incoming_status not in DIAGNOSTIC_STATUS_VALUES:
+        return str(existing or "")
+    parts = [
+        part
+        for part in str(existing or "").split(";")
+        if part and part not in DIAGNOSTIC_STATUS_VALUES
+    ]
+    parts.append(incoming_status)
+    return ";".join(parts)
+
+
+def merge_diagnostic_block(record: dict[str, Any], row: dict[str, Any]) -> None:
+    if not has_diagnostic_fields(row):
+        return
+    if diagnostic_merge_rank(row) < diagnostic_merge_rank(record):
+        return
+    for key in DIAGNOSTIC_KEYS:
+        value = row.get(key)
+        if value not in ("", None):
+            record[key] = value
+    status = replace_diagnostic_status(record.get("status"), row.get("status"))
+    if status:
+        record["status"] = status
+
+
 def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> None:
     run_key = str(row.get("run_key") or "unknown")
     record = records.setdefault(run_key, empty_record(run_key))
@@ -982,8 +1057,12 @@ def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> Non
         elif key in BLOCKING_METADATA_KEYS and metadata_values_conflict(key, record.get(key), row.get(key)):
             record_metadata_conflict(record, key, record.get(key), row.get(key))
 
+    merge_diagnostic_block(record, row)
+
     for key, value in row.items():
         if key in {"run_key", *METADATA_KEYS} or value in ("", None):
+            continue
+        if key in DIAGNOSTIC_KEYS:
             continue
         if key == "latest_checkpoint_path":
             incoming_step = coerce_int(row.get("latest_checkpoint_step"))
@@ -1021,6 +1100,8 @@ def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> Non
             if current is None or (incoming is not None and incoming > current):
                 record[key] = value
         elif key in {"launch_line", "command_summary", "eval_start_line", "status"}:
+            if key == "status" and has_diagnostic_fields(row) and str(value) in DIAGNOSTIC_STATUS_VALUES:
+                continue
             record[key] = append_unique(record.get(key, ""), value)
         else:
             record[key] = value
@@ -1262,7 +1343,7 @@ def annotate_train_commands(rows: list[dict[str, Any]], train_cuda: str, train_s
 def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: str, eval_script: str) -> None:
     for row in rows:
         row["eval_target_checkpoint_path"] = ""
-        if coerce_float(row.get("eval_mean")) is not None:
+        if has_complete_eval_result(row):
             row["eval_readiness"] = "evaluated"
             row["eval_command"] = ""
             row["eval_target_checkpoint_path"] = checkpoint_path_for_step(
@@ -1270,7 +1351,7 @@ def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: 
                 coerce_int(row.get("checkpoint_step")),
             )
             continue
-        if row.get("eval_result_path"):
+        if row.get("eval_result_path") or coerce_float(row.get("eval_mean")) is not None:
             row["eval_readiness"] = "eval_incomplete"
             row["eval_command"] = ""
             row["eval_target_checkpoint_path"] = checkpoint_path_for_step(
@@ -1467,10 +1548,10 @@ def result_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if row.get("seed") not in ("", None):
             group["seeds"].add(str(row["seed"]))
         eval_mean = coerce_float(row.get("eval_mean"))
-        if eval_mean is not None:
+        if eval_mean is not None and row_has_eval(row):
             group["eval_means"].append(eval_mean)
         eval_std = coerce_float(row.get("eval_std"))
-        if eval_std is not None:
+        if eval_std is not None and row_has_eval(row):
             group["eval_stds"].append(eval_std)
 
     baseline_means = [
@@ -1539,7 +1620,11 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if row.get("seed") not in ("", None):
             group["seeds"].add(str(row["seed"]))
         readiness = str(row.get("eval_readiness") or "")
-        if readiness in group:
+        if row_has_eval(row):
+            group["evaluated"] += 1
+        elif readiness == "evaluated":
+            group["eval_incomplete"] += 1
+        elif readiness in group:
             group[readiness] += 1
         if has_diagnostic_result(row):
             group["diagnosed"] += 1
@@ -1564,7 +1649,7 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def row_has_eval(row: dict[str, Any]) -> bool:
-    return coerce_float(row.get("eval_mean")) is not None
+    return has_complete_eval_result(row)
 
 
 def row_has_diagnostic(row: dict[str, Any]) -> bool:
@@ -1576,6 +1661,7 @@ def objective_eval_values(rows: list[dict[str, Any]], objective: str) -> list[fl
         value
         for row in rows
         if str(row.get("objective") or "") == objective
+        if row_has_eval(row)
         for value in [coerce_float(row.get("eval_mean"))]
         if value is not None
     ]
@@ -1583,32 +1669,67 @@ def objective_eval_values(rows: list[dict[str, Any]], objective: str) -> list[fl
 
 def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, label: str) -> str:
     baseline_values = objective_eval_values(rows, "grpo_baseline")
-    objective_values = objective_eval_values(rows, objective)
+    baseline_rows = [row for row in rows if str(row.get("objective") or "") == "grpo_baseline"]
+    objective_rows = [row for row in rows if str(row.get("objective") or "") == objective]
     baseline_mean = average(baseline_values)
-    objective_mean = average(objective_values)
-    if baseline_mean is None or objective_mean is None:
+    if baseline_mean is None or not any(row_has_eval(row) for row in objective_rows):
         return (
-            f"{label}: pending; evaluated baseline runs={len(baseline_values)}, "
-            f"evaluated {objective} runs={len(objective_values)}."
+            f"{label}: pending; complete baseline evals={len(baseline_values)}/{len(baseline_rows)}, "
+            f"complete {objective} evals={sum(1 for row in objective_rows if row_has_eval(row))}/{len(objective_rows)}."
         )
 
-    delta = objective_mean - baseline_mean
-    if delta > 0.005:
-        direction = "positive so far"
-    elif delta < -0.005:
-        direction = "negative so far"
-    else:
-        direction = "roughly tied so far"
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in objective_rows:
+        groups.setdefault((str(row.get("lambda_obs") or ""), str(row.get("lambda_latent") or "")), []).append(row)
+    parts = []
+    for (lambda_obs, lambda_latent), group_rows in sorted(
+        groups.items(),
+        key=lambda item: coerce_float(item[0][0] or item[0][1]) or 0.0,
+    ):
+        values = [
+            value
+            for row in group_rows
+            if row_has_eval(row)
+            for value in [coerce_float(row.get("eval_mean"))]
+            if value is not None
+        ]
+        if not values:
+            parts.append(
+                f"{condition_label(objective, lambda_obs, lambda_latent)} pending "
+                f"(complete evals 0/{len(group_rows)})"
+            )
+            continue
+        objective_mean = average(values)
+        if objective_mean is None:
+            continue
+        delta = objective_mean - baseline_mean
+        if delta > 0.005:
+            direction = "positive so far"
+        elif delta < -0.005:
+            direction = "negative so far"
+        else:
+            direction = "roughly tied so far"
+        parts.append(
+            f"{condition_label(objective, lambda_obs, lambda_latent)} {direction}; "
+            f"mean eval {objective_mean:.4f} vs baseline {baseline_mean:.4f}, "
+            f"delta {delta:+.4f} (complete evals {len(values)}/{len(group_rows)})"
+        )
     return (
-        f"{label}: {direction}; mean eval {objective_mean:.4f} vs baseline "
-        f"{baseline_mean:.4f}, delta {delta:+.4f}."
+        f"{label}: "
+        + "; ".join(parts)
+        + f". Baseline complete evals {len(baseline_values)}/{len(baseline_rows)}."
     )
 
 
 def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
-    diagnostic_rows = [row for row in rows if row_has_diagnostic(row)]
+    objective = "obs_ce"
+    objective_rows = [row for row in rows if str(row.get("objective") or "") == objective]
+    diagnostic_rows = [row for row in objective_rows if row_has_diagnostic(row)]
     if not diagnostic_rows:
-        return "Observation prediction features: pending; no checkpoint diagnostic summaries yet."
+        return (
+            "Observation prediction features: pending; "
+            f"0/{len(objective_rows)} obs_ce run(s) have complete checkpoint diagnostics."
+        )
 
     ce_gaps = [
         value
@@ -1639,7 +1760,8 @@ def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
                 f"{sum(1 for value in cosine_gaps if value < 0)} negative)"
             )
         return (
-            "Observation prediction features: success/failure separation is quantified; "
+            "Observation prediction features: success/failure separation is quantified for "
+            f"{len(diagnostic_rows)}/{len(objective_rows)} obs_ce run(s); "
             + "; ".join(parts)
             + ". Positive CE gap means failure trajectories have higher CE than success trajectories; "
             "positive cosine gap means success trajectories have higher action-observation cosine."
@@ -1652,17 +1774,24 @@ def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
 
 def latent_interpretation(rows: list[dict[str, Any]]) -> str:
     baseline_values = objective_eval_values(rows, "grpo_baseline")
+    latent_rows = [row for row in rows if str(row.get("objective") or "") == "latent"]
     latent_values = objective_eval_values(rows, "latent")
     if not latent_values:
-        return "Latent alignment: pending; no latent eval10x result is available yet."
-    latent_diagnostic_rows = [row for row in rows if str(row.get("objective") or "") == "latent" and row_has_diagnostic(row)]
+        return f"Latent alignment: pending; complete latent eval10x results 0/{len(latent_rows)}."
+    latent_diagnostic_rows = [row for row in latent_rows if row_has_diagnostic(row)]
     if not latent_diagnostic_rows:
-        return "Latent alignment: eval evidence exists, but latent checkpoint diagnostics are still pending."
+        return (
+            "Latent alignment: complete eval evidence exists, but latent checkpoint diagnostics are still pending "
+            f"(complete evals {len(latent_values)}/{len(latent_rows)})."
+        )
     baseline_mean = average(baseline_values)
     latent_mean = average(latent_values)
-    eval_part = f"evaluated latent runs={len(latent_values)}"
+    eval_part = f"complete evals {len(latent_values)}/{len(latent_rows)}"
     if baseline_mean is not None and latent_mean is not None:
-        eval_part = f"mean eval {latent_mean:.4f} vs baseline {baseline_mean:.4f}, delta {latent_mean - baseline_mean:+.4f}"
+        eval_part = (
+            f"mean eval {latent_mean:.4f} vs baseline {baseline_mean:.4f}, "
+            f"delta {latent_mean - baseline_mean:+.4f}; complete evals {len(latent_values)}/{len(latent_rows)}"
+        )
     ce_deltas = [
         value
         for row in latent_diagnostic_rows
@@ -1685,8 +1814,9 @@ def latent_interpretation(rows: list[dict[str, Any]]) -> str:
         if diagnostic_parts
         else f"{len(latent_diagnostic_rows)} latent diagnostic run(s)"
     )
+    evidence = "eval and diagnostic evidence" if len(latent_values) == len(latent_rows) else "partial eval and diagnostic evidence"
     return (
-        f"Latent alignment: eval and diagnostic evidence are available; {eval_part}; "
+        f"Latent alignment: {evidence} are available; {eval_part}; "
         f"{diagnostic_part}."
     )
 
