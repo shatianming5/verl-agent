@@ -195,6 +195,11 @@ def parse_args() -> argparse.Namespace:
         help="Checkpoint diagnostic script path to use in generated diagnostic commands.",
     )
     parser.add_argument(
+        "--diagnostic-cuda",
+        default="<free_2gpu_pair>",
+        help="CUDA_VISIBLE_DEVICES value to use in generated diagnostic commands.",
+    )
+    parser.add_argument(
         "--diagnostic-steps",
         default="init 30 60 90 120 150",
         help="STEPS value to use in generated diagnostic commands.",
@@ -1147,6 +1152,7 @@ def build_diagnostic_command(
     diagnostic_script: str,
     diagnostic_steps: str,
     transition_step: str,
+    diagnostic_cuda: str = "<free_2gpu_pair>",
 ) -> str:
     if not has_diagnostic_target_checkpoint(row, transition_step=transition_step):
         return ""
@@ -1156,6 +1162,7 @@ def build_diagnostic_command(
         return ""
 
     assignments = {
+        "CUDA_VISIBLE_DEVICES": diagnostic_cuda,
         "TRANSITIONS_JSONL": transition_jsonl,
         "CKPT_ROOT": checkpoint_root,
         "TAG": str(row.get("tag") or row.get("run_key") or "wm_checkpoint_diagnostics"),
@@ -1292,6 +1299,7 @@ def annotate_diagnostic_commands(
     diagnostic_script: str,
     diagnostic_steps: str,
     transition_step: str,
+    diagnostic_cuda: str = "<free_2gpu_pair>",
 ) -> None:
     for row in rows:
         if has_diagnostic_result(row):
@@ -1334,6 +1342,7 @@ def annotate_diagnostic_commands(
             diagnostic_script=diagnostic_script,
             diagnostic_steps=diagnostic_steps,
             transition_step=transition_step,
+            diagnostic_cuda=diagnostic_cuda,
         )
 
 
@@ -1754,6 +1763,7 @@ def build_report_generation_metadata(
         ("Eval CUDA", str(args.eval_cuda)),
         ("Eval n", str(args.eval_n)),
         ("Eval script", str(args.eval_script)),
+        ("Diagnostic CUDA", str(args.diagnostic_cuda)),
         ("Diagnostic script", str(args.diagnostic_script)),
         ("Diagnostic steps", str(args.diagnostic_steps)),
         ("Diagnostic transition step", str(args.diagnostic_transition_step)),
@@ -2077,6 +2087,7 @@ def main() -> None:
         diagnostic_script=args.diagnostic_script,
         diagnostic_steps=args.diagnostic_steps,
         transition_step=args.diagnostic_transition_step,
+        diagnostic_cuda=args.diagnostic_cuda,
     )
     annotate_checkpoint_backups(rows, work_root=args.work_root)
     annotate_artifact_coverage(rows)

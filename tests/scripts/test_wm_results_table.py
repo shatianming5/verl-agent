@@ -424,6 +424,7 @@ def test_annotate_diagnostic_commands_uses_rollout_dir_when_available(tmp_path):
     assert rows[0]["diagnostic_transition_jsonl"] == str(transition_jsonl)
     assert rows[0]["diagnostic_readiness"] == "ready_for_diagnostic"
     assert rows[0]["diagnostic_command"] == (
+        "CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' "
         f"TRANSITIONS_JSONL={transition_jsonl} "
         f"CKPT_ROOT={checkpoint_root} "
         "TAG=wmlat_l0p001_s1 STEPS='init 30 60 90 120 150' bash scripts/run_wm_checkpoint_diagnostics.sh"
@@ -512,6 +513,7 @@ def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for
     assert rows[2]["diagnostic_readiness"] == "waiting_for_checkpoint"
     assert rows[3]["diagnostic_transition_jsonl"] == str(baseline_val_jsonl)
     assert rows[3]["diagnostic_readiness"] == "ready_for_diagnostic"
+    assert "CUDA_VISIBLE_DEVICES='<free_2gpu_pair>'" in rows[3]["diagnostic_command"]
     assert f"TRANSITIONS_JSONL={baseline_val_jsonl}" in rows[3]["diagnostic_command"]
     assert rows[4]["diagnostic_transition_jsonl"] == str(
         work_root / "logs" / "world_model_rollouts" / non_baseline_missing_checkpoint_root.name / "150.wm_transitions.jsonl"
@@ -955,6 +957,8 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
             "report-test-rev",
             "--train-cuda",
             "6,7",
+            "--diagnostic-cuda",
+            "4,5",
             "--output-md",
             str(output_md),
             "--output-csv",
@@ -969,6 +973,7 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
     assert "- Report revision: `report-test-rev`" in markdown
     assert "- Expected run inputs: `11`" in markdown
     assert "- Train CUDA: `6,7`" in markdown
+    assert "- Diagnostic CUDA: `4,5`" in markdown
     assert "## Expected Run Coverage" in markdown
     with output_csv.open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
