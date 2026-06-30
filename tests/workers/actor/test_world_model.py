@@ -148,3 +148,20 @@ def test_latent_loss_stop_gradient_target_and_masks_rows(monkeypatch):
     torch.testing.assert_close(embedding_grad[7], torch.zeros_like(embedding_grad[7]))
     torch.testing.assert_close(embedding_grad[9], torch.zeros_like(embedding_grad[9]))
     assert predictor_grad.norm().item() > 0.0
+
+
+def test_extra_state_dict_saves_world_model_predictor_config(monkeypatch):
+    module = _load_dp_actor_module(monkeypatch)
+    actor = object.__new__(module.DataParallelPPOActor)
+    actor.world_model_predictor = torch.nn.Linear(2, 2)
+    actor.world_model_predictor_config = {
+        "hidden_size": 2,
+        "bottleneck_size": 2,
+        "dropout": 0.0,
+        "residual": False,
+    }
+
+    state = actor.extra_state_dict()
+
+    assert state["world_model_predictor_config"]["residual"] is False
+    assert "world_model_predictor" in state

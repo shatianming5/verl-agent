@@ -18,7 +18,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_WORK = "/mnt/cephfs_home_tianming.sha/grpo_alfworld"
 DEFAULT_EVAL_SCRIPT = "/root/grpo/eval10x_alfworld.sh"
 DEFAULT_TRAIN_SCRIPT = "/root/grpo/run_seed_alfworld_official.sh"
@@ -565,7 +564,8 @@ def parse_train_log(path: str) -> dict[str, Any]:
         "launch_line": launch_line,
         "command_summary": launch_line,
         "train_cuda": values.get("cuda", ""),
-        "rollout_data_dir": values.get("rollout_data_dir", ""),
+        "rollout_data_dir": values.get("rollout_data_dir", values.get("trainer.rollout_data_dir", "")),
+        "validation_data_dir": values.get("validation_data_dir", values.get("trainer.validation_data_dir", "")),
         "train_step": "" if latest_step is None else latest_step,
         "train_total_steps": total_steps,
         "latest_checkpoint_step": "" if latest_ckpt_step is None else latest_ckpt_step,
@@ -1205,6 +1205,12 @@ def has_diagnostic_target_checkpoint(row: dict[str, Any], transition_step: str) 
 
 
 def transition_jsonl_from_row(row: dict[str, Any], work_root: str, transition_step: str) -> str:
+    objective = str(row.get("objective") or "")
+    if objective == "grpo_baseline":
+        validation_data_dir = first_path(row.get("validation_data_dir"))
+        if validation_data_dir:
+            return str(Path(validation_data_dir) / f"{transition_step}.val.wm_transitions.jsonl")
+
     rollout_data_dir = first_path(row.get("rollout_data_dir"))
     if rollout_data_dir:
         return str(Path(rollout_data_dir) / f"{transition_step}.wm_transitions.jsonl")
@@ -1216,7 +1222,7 @@ def transition_jsonl_from_row(row: dict[str, Any], work_root: str, transition_st
     if not experiment_name:
         return ""
     transition_jsonl = Path(work_root) / "logs" / "world_model_rollouts" / experiment_name / f"{transition_step}.wm_transitions.jsonl"
-    if str(row.get("objective") or "") == "grpo_baseline" and not transition_jsonl.is_file():
+    if objective == "grpo_baseline" and not transition_jsonl.is_file():
         baseline_val_jsonl = Path(work_root) / BASELINE_VALIDATION_TRANSITION_DUMP
         if baseline_val_jsonl.is_file():
             return str(baseline_val_jsonl)

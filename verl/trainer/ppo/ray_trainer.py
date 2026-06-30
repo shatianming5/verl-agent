@@ -20,8 +20,6 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import json
 import os
-import uuid
-from collections import defaultdict
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -38,8 +36,9 @@ from torch.utils.data import Dataset, Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
+from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
+from gigpo import core_gigpo
 from verl import DataProto
-from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
 from verl.single_controller.ray.base import create_colocated_worker_cls
@@ -49,7 +48,6 @@ from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
     compute_timing_metrics,
-    process_validation_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
@@ -60,9 +58,6 @@ from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seql
 from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
 from verl.workers.rollout.async_server import AsyncLLMServerManager
-from gigpo import core_gigpo
-
-from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
 
 WorkerType = Type[Worker]
 
@@ -700,7 +695,30 @@ class RayPPOTrainer:
         except (TypeError, ValueError):
             return None
 
-    def _dump_world_model_transitions(self, batch, dump_path):
+    @staticmethod
+    def _score_rows(score_tensor):
+        if score_tensor is None:
+            return None
+        if torch.is_tensor(score_tensor):
+            score_tensor = score_tensor.detach().cpu()
+            if score_tensor.ndim == 0:
+                return [score_tensor.item()]
+            if score_tensor.ndim == 1:
+                return score_tensor.tolist()
+            return score_tensor.sum(-1).tolist()
+        return RayPPOTrainer._json_safe(score_tensor)
+
+    def _dump_world_model_transitions(
+        self,
+        batch,
+        dump_path,
+        split="train",
+        filename_suffix="",
+        append=False,
+        row_offset=0,
+        batch_idx=None,
+        score_tensor=None,
+    ):
         """Dump transition rows consumed by scripts/wm_score_transition_dump.py."""
         non_tensor_batch = getattr(batch, "non_tensor_batch", {})
         required_keys = ("wm_prev_obs_text", "wm_action_text", "wm_next_obs_text")
@@ -708,12 +726,14 @@ class RayPPOTrainer:
             return None
 
         os.makedirs(dump_path, exist_ok=True)
-        filename = os.path.join(dump_path, f"{self.global_steps}.wm_transitions.jsonl")
+        if not filename_suffix and split != "train":
+            filename_suffix = f".{split}"
+        filename = os.path.join(dump_path, f"{self.global_steps}{filename_suffix}.wm_transitions.jsonl")
         n = len(non_tensor_batch[required_keys[0]])
 
-        scores = None
-        if hasattr(batch, "batch") and "token_level_scores" in batch.batch:
-            scores = batch.batch["token_level_scores"].sum(-1).detach().cpu().tolist()
+        scores = self._score_rows(score_tensor)
+        if scores is None and hasattr(batch, "batch") and "token_level_scores" in batch.batch:
+            scores = self._score_rows(batch.batch["token_level_scores"])
 
         metadata_keys = {
             "uid",
@@ -728,17 +748,20 @@ class RayPPOTrainer:
             "tool_callings",
         }
 
-        with open(filename, "w") as f:
+        mode = "a" if append else "w"
+        with open(filename, mode) as f:
             for idx in range(n):
                 row = {
                     "schema_version": "wm_transition_v1",
                     "global_step": self.global_steps,
-                    "split": "train",
-                    "row_idx": idx,
+                    "split": split,
+                    "row_idx": row_offset + idx,
                     "wm_prev_obs_text": self._json_safe(self._row_value(non_tensor_batch["wm_prev_obs_text"], idx)),
                     "wm_action_text": self._json_safe(self._row_value(non_tensor_batch["wm_action_text"], idx)),
                     "wm_next_obs_text": self._json_safe(self._row_value(non_tensor_batch["wm_next_obs_text"], idx)),
                 }
+                if batch_idx is not None:
+                    row["batch_idx"] = batch_idx
                 if scores is not None:
                     row["score"] = self._json_safe(scores[idx])
                 for key, values in non_tensor_batch.items():
@@ -787,8 +810,10 @@ class RayPPOTrainer:
         sample_inputs = []
         sample_outputs = []
         sample_scores = []
+        validation_data_dir = self.config.trainer.get("validation_data_dir", None)
+        validation_dump_row_offset = 0
 
-        for test_data in self.val_dataloader:
+        for validation_batch_idx, test_data in enumerate(self.val_dataloader):
             test_batch = DataProto.from_single_dict(test_data)
 
             # repeat test batch
@@ -857,6 +882,18 @@ class RayPPOTrainer:
             reward_tensor = result["reward_tensor"]
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
+            if validation_data_dir:
+                dumped = self._dump_world_model_transitions(
+                    batch=test_batch,
+                    dump_path=validation_data_dir,
+                    split="val",
+                    append=validation_dump_row_offset > 0,
+                    row_offset=validation_dump_row_offset,
+                    batch_idx=validation_batch_idx,
+                    score_tensor=reward_tensor,
+                )
+                if dumped:
+                    validation_dump_row_offset += len(test_batch.non_tensor_batch["wm_prev_obs_text"])
 
             reward_tensor_lst.append(reward_tensor)
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))

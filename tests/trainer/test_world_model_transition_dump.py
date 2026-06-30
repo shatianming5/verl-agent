@@ -142,12 +142,64 @@ def test_dump_world_model_transitions_writes_scorer_schema(tmp_path, monkeypatch
     assert filename == str(tmp_path / "7.wm_transitions.jsonl")
     rows = [json.loads(line) for line in Path(filename).read_text(encoding="utf-8").splitlines()]
     assert rows[0]["schema_version"] == "wm_transition_v1"
+    assert rows[0]["split"] == "train"
     assert rows[0]["wm_prev_obs_text"] == "room"
     assert rows[0]["wm_action_text"] == "take key"
     assert rows[0]["wm_next_obs_text"] == "inventory has key"
     assert rows[0]["score"] == 2.0
     assert rows[0]["episode_success"] is True
     assert rows[1]["active_masks"] is False
+    assert rows[1]["episode_success"] is False
+
+
+def test_dump_world_model_transitions_writes_validation_split_with_append(tmp_path, monkeypatch):
+    module = _load_ray_trainer_module(monkeypatch)
+    trainer = object.__new__(module.RayPPOTrainer)
+    trainer.global_steps = 150
+
+    first_batch = types.SimpleNamespace(
+        batch={},
+        non_tensor_batch={
+            "wm_prev_obs_text": np.array(["room"], dtype=object),
+            "wm_action_text": np.array(["take key"], dtype=object),
+            "wm_next_obs_text": np.array(["inventory has key"], dtype=object),
+            "episode_rewards": np.array([1.0]),
+        },
+    )
+    second_batch = types.SimpleNamespace(
+        batch={},
+        non_tensor_batch={
+            "wm_prev_obs_text": np.array(["hall"], dtype=object),
+            "wm_action_text": np.array(["open door"], dtype=object),
+            "wm_next_obs_text": np.array(["door opens"], dtype=object),
+            "episode_rewards": np.array([0.0]),
+        },
+    )
+
+    first = trainer._dump_world_model_transitions(
+        batch=first_batch,
+        dump_path=str(tmp_path),
+        split="val",
+        batch_idx=0,
+        score_tensor=torch.tensor([[0.25, 0.75]]),
+    )
+    second = trainer._dump_world_model_transitions(
+        batch=second_batch,
+        dump_path=str(tmp_path),
+        split="val",
+        append=True,
+        row_offset=1,
+        batch_idx=1,
+        score_tensor=torch.tensor([0.5]),
+    )
+
+    assert first == second == str(tmp_path / "150.val.wm_transitions.jsonl")
+    rows = [json.loads(line) for line in Path(first).read_text(encoding="utf-8").splitlines()]
+    assert [row["split"] for row in rows] == ["val", "val"]
+    assert [row["row_idx"] for row in rows] == [0, 1]
+    assert [row["batch_idx"] for row in rows] == [0, 1]
+    assert [row["score"] for row in rows] == [1.0, 0.5]
+    assert rows[0]["episode_success"] is True
     assert rows[1]["episode_success"] is False
 
 

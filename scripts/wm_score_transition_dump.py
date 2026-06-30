@@ -10,6 +10,9 @@ chat-template transition used by the training objectives:
 Only tokens in the next-observation user turn are scored for CE/NLL.  When
 hidden states are requested by the model, the script also records the cosine
 between the action-end hidden state and the observation-end hidden state.
+For latent world-model checkpoints, the saved ``world_model_predictor`` in
+checkpoint extra state is applied to the action hidden state before recording
+``action_obs_cosine``.
 """
 
 from __future__ import annotations
@@ -354,6 +357,10 @@ def fsdp_shard_paths(actor_dir: str) -> list[str]:
     return sorted(glob.glob(os.path.join(actor_dir, "model_world_size_*_rank_*.pt")), key=rank_id)
 
 
+def fsdp_extra_state_paths(actor_dir: str) -> list[str]:
+    return sorted(glob.glob(os.path.join(actor_dir, "extra_state_world_size_*_rank_*.pt")), key=rank_id)
+
+
 def materialize_dtensor_value(values: list[Any]) -> Any:
     import torch
 
@@ -405,6 +412,119 @@ def load_fsdp_dtensor_state_dict(actor_dir: str) -> dict[str, Any]:
     return merged
 
 
+def load_world_model_predictor_checkpoint(actor_dir: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    import torch
+
+    extra_state_paths = fsdp_extra_state_paths(actor_dir)
+    if not extra_state_paths:
+        return None
+
+    for extra_state_path in extra_state_paths:
+        # These are local trusted training artifacts. PyTorch 2.6+ needs
+        # weights_only=False for checkpoint state pickles.
+        extra_state = torch.load(extra_state_path, map_location="cpu", weights_only=False)
+        custom_extra_state = (extra_state or {}).get("custom_extra_state") or {}
+        predictor_state = custom_extra_state.get("world_model_predictor")
+        if predictor_state:
+            print(f"WM_SCORE_LOAD_PREDICTOR_STATE extra_state={extra_state_path}", flush=True)
+            materialized_state = {
+                key: materialize_dtensor_value([value]) if torch.is_tensor(value) or hasattr(value, "to_local") else value
+                for key, value in predictor_state.items()
+            }
+            predictor_config = custom_extra_state.get("world_model_predictor_config") or {}
+            return materialized_state, predictor_config
+    return None
+
+
+def load_world_model_predictor_state(actor_dir: str) -> dict[str, Any] | None:
+    checkpoint = load_world_model_predictor_checkpoint(actor_dir)
+    return checkpoint[0] if checkpoint is not None else None
+
+
+def infer_world_model_predictor_dims(predictor_state: dict[str, Any]) -> tuple[int, int]:
+    first_linear = predictor_state.get("net.1.weight")
+    last_linear = predictor_state.get("net.4.weight")
+    missing = [key for key in ("net.1.weight", "net.4.weight") if predictor_state.get(key) is None]
+    if missing:
+        raise ValueError(f"world_model_predictor state is missing expected keys: {missing}")
+    if len(first_linear.shape) != 2 or len(last_linear.shape) != 2:
+        raise ValueError("world_model_predictor linear weights must be rank-2 tensors")
+
+    bottleneck_size, hidden_size = (int(size) for size in first_linear.shape)
+    output_hidden_size, output_bottleneck_size = (int(size) for size in last_linear.shape)
+    if hidden_size != output_hidden_size or bottleneck_size != output_bottleneck_size:
+        raise ValueError(
+            "world_model_predictor tensor shapes are inconsistent: "
+            f"net.1.weight={tuple(first_linear.shape)} net.4.weight={tuple(last_linear.shape)}"
+        )
+    return hidden_size, bottleneck_size
+
+
+def build_world_model_predictor(
+    predictor_state: dict[str, Any],
+    device: str,
+    dtype_name: str,
+    residual: bool = True,
+) -> Any:
+    import torch
+    from torch import nn
+
+    class LatentTransitionPredictor(nn.Module):
+        def __init__(self, hidden_size: int, bottleneck_size: int, residual: bool):
+            super().__init__()
+            self.residual = residual
+            self.net = nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Linear(hidden_size, bottleneck_size),
+                nn.GELU(),
+                nn.Dropout(0.0),
+                nn.Linear(bottleneck_size, hidden_size),
+            )
+
+        def forward(self, hidden_states):
+            prediction = self.net(hidden_states)
+            if self.residual:
+                prediction = hidden_states + prediction
+            return prediction
+
+    hidden_size, bottleneck_size = infer_world_model_predictor_dims(predictor_state)
+    dtype = dtype_from_name(torch, dtype_name)
+    predictor = LatentTransitionPredictor(
+        hidden_size=hidden_size,
+        bottleneck_size=bottleneck_size,
+        residual=residual,
+    )
+    state = {}
+    for key, value in predictor_state.items():
+        if torch.is_tensor(value):
+            state[key] = value.to(device=device, dtype=dtype) if torch.is_floating_point(value) else value.to(device=device)
+        else:
+            state[key] = value
+    predictor.load_state_dict(state, strict=True)
+    predictor.to(device=device, dtype=dtype)
+    predictor.eval()
+    for parameter in predictor.parameters():
+        parameter.requires_grad_(False)
+    print(
+        "WM_SCORE_LOAD_PREDICTOR "
+        f"hidden_size={hidden_size} bottleneck_size={bottleneck_size} residual={residual}",
+        flush=True,
+    )
+    return predictor
+
+
+def load_world_model_predictor(actor_dir: str | None, device: str, dtype_name: str) -> Any | None:
+    if actor_dir is None:
+        return None
+    predictor_checkpoint = load_world_model_predictor_checkpoint(actor_dir)
+    if predictor_checkpoint is None:
+        return None
+    predictor_state, predictor_config = predictor_checkpoint
+    residual_value = _to_bool(predictor_config.get("residual")) if "residual" in predictor_config else None
+    residual = True if residual_value is None else residual_value
+    return build_world_model_predictor(predictor_state, device=device, dtype_name=dtype_name, residual=residual)
+
+
 def load_model(model_path: str, checkpoint: CheckpointSpec, device: str, dtype_name: str) -> Any:
     import torch
     from transformers import AutoModelForCausalLM
@@ -452,6 +572,7 @@ def score_batch(
     checkpoint: CheckpointSpec,
     device: str,
     skip_entropy: bool,
+    world_model_predictor: Any | None = None,
 ) -> list[dict[str, Any]]:
     import torch
     import torch.nn.functional as F
@@ -492,13 +613,24 @@ def score_batch(
                 probs = log_probs.exp()
                 entropy = float((-(probs * log_probs).sum(dim=-1)).mean().item())
 
-        action_norm = obs_norm = action_obs_cosine = None
+        action_norm = obs_norm = action_obs_cosine = raw_action_obs_cosine = None
+        pred_norm = pred_obs_cosine = None
         if item.action_end_pos is not None and item.obs_end_pos is not None:
-            action_hidden = last_hidden[i, item.action_end_pos].float()
-            obs_hidden = last_hidden[i, item.obs_end_pos].float()
-            action_norm = float(action_hidden.norm().item())
-            obs_norm = float(obs_hidden.norm().item())
-            action_obs_cosine = float(F.cosine_similarity(action_hidden, obs_hidden, dim=0).item())
+            action_hidden = last_hidden[i, item.action_end_pos]
+            obs_hidden = last_hidden[i, item.obs_end_pos]
+            action_hidden_float = action_hidden.float()
+            obs_hidden_float = obs_hidden.float()
+            action_norm = float(action_hidden_float.norm().item())
+            obs_norm = float(obs_hidden_float.norm().item())
+            raw_action_obs_cosine = float(F.cosine_similarity(action_hidden_float, obs_hidden_float, dim=0).item())
+            action_obs_cosine = raw_action_obs_cosine
+            if world_model_predictor is not None:
+                with torch.no_grad():
+                    pred_hidden = world_model_predictor(action_hidden.unsqueeze(0)).squeeze(0)
+                pred_hidden_float = pred_hidden.float()
+                pred_norm = float(pred_hidden_float.norm().item())
+                pred_obs_cosine = float(F.cosine_similarity(pred_hidden_float, obs_hidden_float, dim=0).item())
+                action_obs_cosine = pred_obs_cosine
 
         source = item.row
         result = {
@@ -523,6 +655,10 @@ def score_batch(
             "target_entropy_mean": safe_float(entropy),
             "action_hidden_norm": safe_float(action_norm),
             "obs_hidden_norm": safe_float(obs_norm),
+            "raw_action_obs_cosine": safe_float(raw_action_obs_cosine),
+            "world_model_predictor_loaded": world_model_predictor is not None,
+            "pred_hidden_norm": safe_float(pred_norm),
+            "pred_obs_cosine": safe_float(pred_obs_cosine),
             "action_obs_cosine": safe_float(action_obs_cosine),
         }
         for key, value in source.items():
@@ -542,14 +678,26 @@ def score_checkpoint(
     device = args.device
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
+    actor_dir = resolve_actor_dir(checkpoint.path)
     model = load_model(args.model_path, checkpoint, device=device, dtype_name=args.dtype)
+    world_model_predictor = load_world_model_predictor(actor_dir, device=device, dtype_name=args.dtype)
     results = []
     print(f"WM_SCORE_CHECKPOINT_START label={checkpoint.label} rows={len(encoded)}", flush=True)
     for start in range(0, len(encoded), args.batch_size):
         batch = encoded[start : start + args.batch_size]
-        results.extend(score_batch(model, batch, checkpoint, device=device, skip_entropy=args.skip_entropy))
+        results.extend(
+            score_batch(
+                model,
+                batch,
+                checkpoint,
+                device=device,
+                skip_entropy=args.skip_entropy,
+                world_model_predictor=world_model_predictor,
+            )
+        )
         if (start // args.batch_size + 1) % 10 == 0:
             print(f"WM_SCORE_PROGRESS label={checkpoint.label} rows={len(results)}/{len(encoded)}", flush=True)
+    del world_model_predictor
     del model
     if device.startswith("cuda"):
         torch.cuda.empty_cache()
@@ -583,6 +731,10 @@ def summarize_metric_group(group: list[dict[str, Any]]) -> dict[str, Any]:
         "row_mean_target_entropy": safe_float(mean(numeric_values(token_rows, "target_entropy_mean"))),
         "row_mean_action_hidden_norm": safe_float(mean(numeric_values(group, "action_hidden_norm"))),
         "row_mean_obs_hidden_norm": safe_float(mean(numeric_values(group, "obs_hidden_norm"))),
+        "row_mean_raw_action_obs_cosine": safe_float(mean(numeric_values(group, "raw_action_obs_cosine"))),
+        "world_model_predictor_loaded_rows": sum(1 for row in group if _to_bool(row.get("world_model_predictor_loaded"))),
+        "row_mean_pred_hidden_norm": safe_float(mean(numeric_values(group, "pred_hidden_norm"))),
+        "row_mean_pred_obs_cosine": safe_float(mean(numeric_values(group, "pred_obs_cosine"))),
         "row_mean_action_obs_cosine": safe_float(mean(numeric_values(group, "action_obs_cosine"))),
     }
 

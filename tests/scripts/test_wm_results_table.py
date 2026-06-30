@@ -2,9 +2,10 @@ import csv
 import importlib.util
 import json
 import os
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 
 def _load_module():
@@ -147,7 +148,7 @@ def test_parse_train_log_handles_live_tqdm_step_lines(tmp_path):
     log_path.write_text(
         "\n".join(
             [
-                "RUN_WM_LATENT_SEED seed=0 tag=wmlat_l0p001_s0 cuda=0,3 lambda_latent=0.001 total_epochs=150 rollout_data_dir=/work/rollouts",
+                "RUN_WM_LATENT_SEED seed=0 tag=wmlat_l0p001_s0 cuda=0,3 lambda_latent=0.001 total_epochs=150 rollout_data_dir=/work/rollouts trainer.validation_data_dir=/work/val_rollouts",
                 "RUN_ALFWORLD_OFFICIAL seed=0 tag=wmlat_l0p001_s0 cuda=0,3 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlat_l0p001_s0",
                 "Training Progress:  80%|████████  | 120/150 [28:10:17<8:28:26, 1016.88s/it]",
                 "step:120 - world_model/latent_loss:0.211 - world_model/latent_cosine:0.789 - val/success_rate:0.609 - training/global_step:120.000",
@@ -166,6 +167,8 @@ def test_parse_train_log_handles_live_tqdm_step_lines(tmp_path):
     assert row["train_total_steps"] == 150
     assert row["latest_checkpoint_step"] == 120
     assert row["latest_checkpoint_path"].endswith("global_step_120")
+    assert row["rollout_data_dir"] == "/work/rollouts"
+    assert row["validation_data_dir"] == "/work/val_rollouts"
     assert row["val_success_last"] == 0.609
     assert row["world_model/latent_loss"] == 0.257
     assert row["wm_loss_last"] == 0.257
@@ -463,6 +466,79 @@ def test_annotate_diagnostic_commands_uses_rollout_dir_when_available(tmp_path):
     assert "## Diagnostic Commands" in markdown
     assert "latent_l0p001_s1" in markdown
     assert "150.wm_transitions.jsonl" in markdown
+
+
+def test_transition_jsonl_uses_baseline_validation_data_dir_before_smoke_fallback(tmp_path):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    validation_dir = work_root / "logs" / "validation_rollouts" / "official_s2"
+    validation_jsonl = validation_dir / "150.val.wm_transitions.jsonl"
+    validation_jsonl.parent.mkdir(parents=True)
+    validation_jsonl.write_text('{"split": "val"}\n', encoding="utf-8")
+    fallback_jsonl = work_root / module.BASELINE_VALIDATION_TRANSITION_DUMP
+    fallback_jsonl.parent.mkdir(parents=True)
+    fallback_jsonl.write_text('{"split": "old"}\n', encoding="utf-8")
+
+    row = {
+        "objective": "grpo_baseline",
+        "validation_data_dir": str(validation_dir),
+        "latest_checkpoint_path": str(
+            work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2" / "global_step_150"
+        ),
+    }
+
+    assert (
+        module.transition_jsonl_from_row(row, work_root=str(work_root), transition_step="150")
+        == str(validation_jsonl)
+    )
+
+
+def test_transition_jsonl_prefers_baseline_validation_data_dir_over_rollout_dir(tmp_path):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    validation_dir = work_root / "logs" / "validation_rollouts" / "official_s2"
+    rollout_dir = work_root / "logs" / "world_model_rollouts" / "official_s2"
+    validation_jsonl = validation_dir / "150.val.wm_transitions.jsonl"
+    rollout_jsonl = rollout_dir / "150.wm_transitions.jsonl"
+    validation_jsonl.parent.mkdir(parents=True)
+    rollout_jsonl.parent.mkdir(parents=True)
+    validation_jsonl.write_text('{"split": "val"}\n', encoding="utf-8")
+    rollout_jsonl.write_text('{"split": "train"}\n', encoding="utf-8")
+
+    row = {
+        "objective": "grpo_baseline",
+        "validation_data_dir": str(validation_dir),
+        "rollout_data_dir": str(rollout_dir),
+        "latest_checkpoint_path": str(
+            work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2" / "global_step_150"
+        ),
+    }
+
+    assert (
+        module.transition_jsonl_from_row(row, work_root=str(work_root), transition_step="150")
+        == str(validation_jsonl)
+    )
+
+
+def test_transition_jsonl_reports_missing_configured_baseline_validation_dump(tmp_path):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    validation_dir = work_root / "logs" / "validation_rollouts" / "official_s2"
+    fallback_jsonl = work_root / module.BASELINE_VALIDATION_TRANSITION_DUMP
+    fallback_jsonl.parent.mkdir(parents=True)
+    fallback_jsonl.write_text('{"split": "old"}\n', encoding="utf-8")
+
+    row = {
+        "objective": "grpo_baseline",
+        "validation_data_dir": str(validation_dir),
+        "latest_checkpoint_path": str(
+            work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2" / "global_step_150"
+        ),
+    }
+
+    assert module.transition_jsonl_from_row(row, work_root=str(work_root), transition_step="150") == str(
+        validation_dir / "150.val.wm_transitions.jsonl"
+    )
 
 
 def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for_step150(tmp_path):

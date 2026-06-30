@@ -18,15 +18,14 @@ Single Process Actor
 """
 
 import itertools
-import time
 import logging
 import os
 from typing import Tuple
 
 import torch
-from torch import nn
 import torch.distributed as dist
 import torch.nn.functional as F
+from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 import verl.utils.torch_functional as verl_F
@@ -38,7 +37,7 @@ from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_
 from verl.utils.py_functional import append_to_dict
 from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
-from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs, ulysses_pad
+from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad, ulysses_pad_and_slice_inputs
 from verl.workers.actor import BasePPOActor
 from verl.workers.actor.world_model import LatentTransitionPredictor
 
@@ -61,6 +60,7 @@ class DataParallelPPOActor(BasePPOActor):
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
         self.world_model_predictor = None
+        self.world_model_predictor_config = {}
         self.world_model_loss_coef = 0.0
         self._last_world_model_grad_norm = None
 
@@ -143,6 +143,12 @@ class DataParallelPPOActor(BasePPOActor):
         residual = bool(world_model_config.get("predictor_residual", True))
         first_param = self._first_actor_parameter()
 
+        self.world_model_predictor_config = {
+            "hidden_size": hidden_size,
+            "bottleneck_size": predictor_hidden_size,
+            "dropout": dropout,
+            "residual": residual,
+        }
         self.world_model_predictor = LatentTransitionPredictor(
             hidden_size=hidden_size,
             bottleneck_size=predictor_hidden_size,
@@ -166,6 +172,7 @@ class DataParallelPPOActor(BasePPOActor):
         if self.world_model_predictor is None:
             return {}
         return {
+            "world_model_predictor_config": dict(self.world_model_predictor_config),
             "world_model_predictor": {
                 key: value.detach().cpu()
                 for key, value in self.world_model_predictor.state_dict().items()

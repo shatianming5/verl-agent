@@ -1,8 +1,10 @@
 import importlib.util
 import json
-import pytest
 import sys
+import types
 from pathlib import Path
+
+import pytest
 
 
 class FakeTokenizer:
@@ -241,3 +243,102 @@ def test_atomic_write_preserves_existing_summary_on_replace_failure(tmp_path, mo
 
     assert json.loads(output_path.read_text(encoding="utf-8")) == {"old": True}
     assert list(tmp_path.glob(".checkpoint_scores_summary.json.*.tmp")) == []
+
+
+def test_load_world_model_predictor_from_checkpoint_extra_state(tmp_path):
+    torch = pytest.importorskip("torch")
+    module = _load_module()
+    actor_dir = tmp_path / "actor"
+    actor_dir.mkdir()
+    predictor_state = {
+        "net.0.weight": torch.ones(4),
+        "net.0.bias": torch.zeros(4),
+        "net.1.weight": torch.zeros(3, 4),
+        "net.1.bias": torch.zeros(3),
+        "net.4.weight": torch.zeros(4, 3),
+        "net.4.bias": torch.tensor([0.0, 1.0, 0.0, 0.0]),
+    }
+    torch.save(
+        {"custom_extra_state": {"world_model_predictor": predictor_state}},
+        actor_dir / "extra_state_world_size_1_rank_0.pt",
+    )
+
+    predictor = module.load_world_model_predictor(str(actor_dir), device="cpu", dtype_name="float32")
+
+    assert predictor is not None
+    hidden = torch.zeros(1, 4)
+    assert torch.allclose(predictor(hidden), torch.tensor([[0.0, 1.0, 0.0, 0.0]]))
+
+
+def test_load_world_model_predictor_respects_non_residual_checkpoint_config(tmp_path):
+    torch = pytest.importorskip("torch")
+    module = _load_module()
+    actor_dir = tmp_path / "actor"
+    actor_dir.mkdir()
+    predictor_state = {
+        "net.0.weight": torch.ones(4),
+        "net.0.bias": torch.zeros(4),
+        "net.1.weight": torch.zeros(3, 4),
+        "net.1.bias": torch.zeros(3),
+        "net.4.weight": torch.zeros(4, 3),
+        "net.4.bias": torch.tensor([0.0, 1.0, 0.0, 0.0]),
+    }
+    torch.save(
+        {
+            "custom_extra_state": {
+                "world_model_predictor": predictor_state,
+                "world_model_predictor_config": {"residual": False},
+            }
+        },
+        actor_dir / "extra_state_world_size_1_rank_0.pt",
+    )
+
+    predictor = module.load_world_model_predictor(str(actor_dir), device="cpu", dtype_name="float32")
+
+    assert predictor is not None
+    hidden = torch.tensor([[2.0, 0.0, 0.0, 0.0]])
+    assert torch.allclose(predictor(hidden), torch.tensor([[0.0, 1.0, 0.0, 0.0]]))
+
+
+def test_score_batch_uses_loaded_world_model_predictor_for_cosine():
+    torch = pytest.importorskip("torch")
+    module = _load_module()
+
+    class FakeModel:
+        def __call__(self, input_ids, attention_mask, use_cache, output_hidden_states):
+            logits = torch.zeros(input_ids.size(0), input_ids.size(1), 8, device=input_ids.device)
+            hidden = torch.zeros(input_ids.size(0), input_ids.size(1), 2, device=input_ids.device)
+            hidden[:, 1, :] = torch.tensor([1.0, 0.0], device=input_ids.device)
+            hidden[:, 2, :] = torch.tensor([0.0, 1.0], device=input_ids.device)
+            return types.SimpleNamespace(logits=logits, hidden_states=[hidden])
+
+    predictor = torch.nn.Linear(2, 2, bias=False)
+    with torch.no_grad():
+        predictor.weight.copy_(torch.tensor([[0.0, 0.0], [1.0, 0.0]]))
+    encoded = module.EncodedTransition(
+        transition_index=0,
+        row=_row(),
+        input_ids=[0, 2, 3, 0],
+        attention_mask=[1, 1, 1, 0],
+        loss_mask=[0.0, 0.0, 0.0, 0.0],
+        seq_len=3,
+        target_tokens=0,
+        target_start=2,
+        action_end_pos=1,
+        obs_end_pos=2,
+        episode_success=True,
+    )
+
+    rows = module.score_batch(
+        model=FakeModel(),
+        batch=[encoded],
+        checkpoint=module.CheckpointSpec(label="step1", path="/ckpt/global_step_1"),
+        device="cpu",
+        skip_entropy=True,
+        world_model_predictor=predictor,
+    )
+
+    assert rows[0]["raw_action_obs_cosine"] == 0.0
+    assert rows[0]["pred_obs_cosine"] == 1.0
+    assert rows[0]["action_obs_cosine"] == 1.0
+    assert rows[0]["world_model_predictor_loaded"] is True
