@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import pytest
 import sys
 from pathlib import Path
 
@@ -168,3 +169,20 @@ def test_build_provenance_records_scoring_config(monkeypatch):
     assert provenance["batch_size"] == 4
     assert provenance["skip_entropy"] is True
     assert provenance["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_atomic_write_preserves_existing_summary_on_replace_failure(tmp_path, monkeypatch):
+    module = _load_module()
+    output_path = tmp_path / "checkpoint_scores_summary.json"
+    output_path.write_text('{"old": true}\n', encoding="utf-8")
+
+    def fail_replace(src, dst):
+        raise RuntimeError("replace failed")
+
+    monkeypatch.setattr(module.os, "replace", fail_replace)
+
+    with pytest.raises(RuntimeError, match="replace failed"):
+        module.write_json(str(output_path), {"old": False})
+
+    assert json.loads(output_path.read_text(encoding="utf-8")) == {"old": True}
+    assert list(tmp_path.glob(".checkpoint_scores_summary.json.*.tmp")) == []

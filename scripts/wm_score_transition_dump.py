@@ -24,6 +24,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -607,19 +608,54 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"checkpoints": checkpoint_summaries, "success_buckets": success_buckets}
 
 
+def atomic_write(path: str, writer: Any) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            delete=False,
+            dir=str(target.parent),
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            encoding="utf-8",
+            newline="",
+        ) as handle:
+            temp_name = handle.name
+            writer(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, target)
+    finally:
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+
+
 def write_csv(path: str, rows: list[dict[str, Any]]) -> None:
     fieldnames = []
     for row in rows:
         for key in row:
             if key not in fieldnames:
                 fieldnames.append(key)
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as handle:
+
+    def writer(handle: Any) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+    atomic_write(path, writer)
+
+
+def write_json(path: str, value: Any) -> None:
+    def writer(handle: Any) -> None:
+        json.dump(value, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+    atomic_write(path, writer)
 
 
 def main() -> None:
@@ -651,12 +687,7 @@ def main() -> None:
     summary["max_length"] = args.max_length
     summary["rows"] = len(encoded)
     summary["provenance"] = build_provenance(args, specs)
-    parent = os.path.dirname(args.summary_json)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(args.summary_json, "w", encoding="utf-8") as handle:
-        json.dump(summary, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    write_json(args.summary_json, summary)
     print(f"WM_SCORE_DONE csv={args.output_csv} summary={args.summary_json}", flush=True)
 
 

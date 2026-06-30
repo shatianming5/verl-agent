@@ -13,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -1719,27 +1720,50 @@ def render_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def atomic_write(path: str, writer: Any) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            delete=False,
+            dir=str(target.parent),
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            encoding="utf-8",
+            newline="",
+        ) as handle:
+            temp_name = handle.name
+            writer(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, target)
+    finally:
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+
+
 def write_csv(path: str, rows: list[dict[str, Any]]) -> None:
     fieldnames = list(CSV_COLUMNS)
     for row in rows:
         for key in row:
             if key not in fieldnames:
                 fieldnames.append(key)
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as handle:
+
+    def writer(handle: Any) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
+    atomic_write(path, writer)
+
 
 def write_text(path: str, text: str) -> None:
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    atomic_write(path, lambda handle: handle.write(text))
 
 
 def main() -> None:
