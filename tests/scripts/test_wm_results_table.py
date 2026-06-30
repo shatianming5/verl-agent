@@ -409,6 +409,7 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "run_key": "grpo_baseline_s0",
             "objective": "grpo_baseline",
             "seed": "0",
+            "expected": "yes",
             "eval_mean": 0.70,
             "train_log_path": "/work/logs/baseline.log",
             "eval_readiness": "evaluated",
@@ -419,6 +420,7 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "run_key": "obs_ce_l0p01_s0",
             "objective": "obs_ce",
             "seed": "0",
+            "expected": "yes",
             "lambda_obs": "0.01",
             "eval_mean": 0.73,
             "train_log_path": "/work/logs/obs.log",
@@ -436,12 +438,20 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
             "eval_readiness": "waiting_for_checkpoint",
             "diagnostic_readiness": "waiting_for_checkpoint",
         },
+        {
+            "run_key": "latent_s0",
+            "objective": "latent",
+            "seed": "0",
+            "eval_mean": 0.99,
+            "eval_readiness": "evaluated",
+            "diagnostic_readiness": "diagnosed",
+        },
     ]
 
     status = dict(module.goal_rd_deliverable_status(rows, branch="world-model-latent-objective"))
 
     assert status["Branch name"] == "world-model-latent-objective"
-    assert status["Result table status"].startswith("0/1 tracked run(s) have eval results")
+    assert status["Result table status"].startswith("2/3 tracked run(s) have eval results")
     assert "waiting_for_checkpoint" in status["Result table status"]
     assert "Raw observation CE: positive so far" in status["Raw observation CE interpretation"]
     assert "evidence available" in status["World-model feature interpretation"]
@@ -449,9 +459,13 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
 
     markdown = module.render_markdown(rows, branch="world-model-latent-objective")
     assert "## GOAL_RD Deliverable Status" in markdown
+    assert "- GOAL_RD summary scope: `3` expected run(s)" in markdown
+    assert "- Additional observed runs: `1`" in markdown
     assert "- Branch name: `world-model-latent-objective`" in markdown
     assert "- Exact commands/configs: `per-run launch lines" in markdown
-    assert "- Training log coverage: `0/1 tracked run(s) have training logs`" in markdown
+    assert "- Training log coverage: `2/3 tracked run(s) have training logs`" in markdown
+    assert "| latent_s0 |" in markdown
+    assert "| latent | latent |  |  | 1 | 1 | 0 | 0.9900 |" not in markdown
 
 
 def test_expected_run_coverage_reports_missing_artifacts():

@@ -1265,8 +1265,7 @@ def goal_rd_deliverable_status(
     rows: list[dict[str, Any]],
     branch: str = "",
 ) -> list[tuple[str, str]]:
-    expected_rows = [row for row in rows if row.get("expected") == "yes"]
-    tracked_rows = expected_rows or rows
+    tracked_rows = report_scope_rows(rows)
     expected_count = len(tracked_rows)
     train_count = sum(1 for row in tracked_rows if row.get("train_log_path"))
     eval_count = sum(1 for row in tracked_rows if row_has_eval(row))
@@ -1295,11 +1294,16 @@ def goal_rd_deliverable_status(
             f"{diagnostic_count}/{expected_count} tracked run(s) have checkpoint diagnostics; "
             f"diagnostic readiness {dict(sorted(diagnostic_readiness.items()))}",
         ),
-        ("Raw observation CE interpretation", objective_eval_interpretation(rows, "obs_ce", "Raw observation CE")),
-        ("World-model feature interpretation", diagnostic_interpretation(rows)),
-        ("Latent alignment interpretation", latent_interpretation(rows)),
+        ("Raw observation CE interpretation", objective_eval_interpretation(tracked_rows, "obs_ce", "Raw observation CE")),
+        ("World-model feature interpretation", diagnostic_interpretation(tracked_rows)),
+        ("Latent alignment interpretation", latent_interpretation(tracked_rows)),
         ("Training log coverage", f"{train_count}/{expected_count} tracked run(s) have training logs"),
     ]
+
+
+def report_scope_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expected_rows = [row for row in rows if row.get("expected") == "yes"]
+    return expected_rows or rows
 
 
 def build_report_generation_metadata(
@@ -1340,11 +1344,16 @@ def render_markdown(
     work_root: str = DEFAULT_WORK,
     report_generation: list[tuple[str, str]] | None = None,
 ) -> str:
+    scoped_rows = report_scope_rows(rows)
+    extra_observed_rows = [row for row in rows if row.get("expected") != "yes"] if scoped_rows is not rows else []
     lines = ["# ALFWorld World-Model Results", ""]
     if branch:
         lines.append(f"- Branch: `{branch}`")
     lines.append(f"- Work root: `{work_root}`")
     lines.append(f"- Runs in table: `{len(rows)}`")
+    if extra_observed_rows:
+        lines.append(f"- GOAL_RD summary scope: `{len(scoped_rows)}` expected run(s)")
+        lines.append(f"- Additional observed runs: `{len(extra_observed_rows)}`")
     lines.append("")
     if report_generation:
         lines.append("## Report Generation")
@@ -1396,7 +1405,7 @@ def render_markdown(
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
 
-    summary_rows = result_summary(rows)
+    summary_rows = result_summary(scoped_rows)
     if summary_rows:
         lines.append("## Result Summary")
         lines.append("")
@@ -1425,7 +1434,7 @@ def render_markdown(
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
-    coverage_rows = objective_coverage(rows)
+    coverage_rows = objective_coverage(scoped_rows)
     if coverage_rows:
         lines.append("## Objective Coverage")
         lines.append("")
@@ -1449,13 +1458,13 @@ def render_markdown(
             lines.append("| " + " | ".join(str(row.get(key, "")) for key, _ in coverage_columns) + " |")
         lines.append("")
 
-    readiness_counts = Counter(str(row.get("eval_readiness") or "unknown") for row in rows)
+    readiness_counts = Counter(str(row.get("eval_readiness") or "unknown") for row in scoped_rows)
     if readiness_counts:
         lines.append("## Eval Readiness")
         lines.append("")
         for readiness, count in sorted(readiness_counts.items()):
             lines.append(f"- {readiness}: `{count}`")
-        ready_rows = [row for row in rows if row.get("eval_readiness") == "ready_for_eval" and row.get("eval_command")]
+        ready_rows = [row for row in scoped_rows if row.get("eval_readiness") == "ready_for_eval" and row.get("eval_command")]
         if ready_rows:
             lines.append("")
             lines.append("Ready eval commands:")
@@ -1465,7 +1474,7 @@ def render_markdown(
                 lines.append(f"- `{row.get('run_key', '')}` checkpoint `{target}`: `{row['eval_command']}`")
         lines.append("")
 
-    diagnostic_readiness_counts = Counter(str(row.get("diagnostic_readiness") or "unknown") for row in rows)
+    diagnostic_readiness_counts = Counter(str(row.get("diagnostic_readiness") or "unknown") for row in scoped_rows)
     if diagnostic_readiness_counts:
         lines.append("## Diagnostic Readiness")
         lines.append("")
@@ -1475,7 +1484,7 @@ def render_markdown(
 
     diagnostic_command_rows = [
         row
-        for row in rows
+        for row in scoped_rows
         if row.get("diagnostic_command") and not row.get("diagnostic_summary_path")
     ]
     if diagnostic_command_rows:
