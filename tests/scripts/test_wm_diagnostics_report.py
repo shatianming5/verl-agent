@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _load_module():
     repo_root = Path(__file__).resolve().parents[2]
@@ -177,3 +179,20 @@ def test_main_writes_markdown_csv_and_svg(tmp_path, monkeypatch):
     assert csv_rows[0]["diagnostic_model_path"] == "/model"
     assert csv_rows[0]["diagnostic_dtype"] == "bfloat16"
     assert csv_rows[1]["delta_token_mean_ce"] == "-0.5"
+
+
+def test_atomic_write_preserves_existing_file_on_replace_failure(tmp_path, monkeypatch):
+    module = _load_module()
+    output_path = tmp_path / "report.md"
+    output_path.write_text("old report\n", encoding="utf-8")
+
+    def fail_replace(src, dst):
+        raise RuntimeError("replace failed")
+
+    monkeypatch.setattr(module.os, "replace", fail_replace)
+
+    with pytest.raises(RuntimeError, match="replace failed"):
+        module.write_text(str(output_path), "new report\n")
+
+    assert output_path.read_text(encoding="utf-8") == "old report\n"
+    assert list(tmp_path.glob(".report.md.*.tmp")) == []
