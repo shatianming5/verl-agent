@@ -444,15 +444,29 @@ def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for
     ready_transition_jsonl = ready_rollout_dir / "150.wm_transitions.jsonl"
     ready_transition_jsonl.write_text('{"ok": true}\n', encoding="utf-8")
     missing_checkpoint_root = work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2"
+    baseline_val_jsonl = (
+        work_root
+        / "logs"
+        / "world_model_diagnostics"
+        / "wm_valdump_smoke_s0_step150"
+        / "150.val.wm_transitions.jsonl"
+    )
+    baseline_val_jsonl.parent.mkdir(parents=True)
+    baseline_val_jsonl.write_text('{"split": "val"}\n', encoding="utf-8")
+    non_baseline_missing_checkpoint_root = (
+        work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p05_s1"
+    )
     rows = [
         {
             "run_key": "obs_ce_l0p05_s0",
             "tag": "wm_obs_ce_l0p05_s0",
+            "objective": "obs_ce",
             "latest_checkpoint_path": str(ready_checkpoint_root / "global_step_150"),
         },
         {
             "run_key": "obs_ce_l0p03_s0",
             "tag": "wm_obs_ce_l0p03_s0",
+            "objective": "obs_ce",
             "latest_checkpoint_path": str(work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p03_s0" / "global_step_150"),
             "diagnostic_summary_path": "/work/logs/world_model_diagnostics/wm_obs_ce_l0p03_s0/checkpoint_scores_summary.json",
             "diagnostic_final_step": "150",
@@ -463,13 +477,21 @@ def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for
         {
             "run_key": "latent_l0p001_s0",
             "tag": "wmlat_l0p001_s0",
+            "objective": "latent",
             "latest_checkpoint_step": 120,
             "latest_checkpoint_path": "/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlat_l0p001_s0/global_step_120",
         },
         {
             "run_key": "grpo_baseline_s2",
             "tag": "official_s2",
+            "objective": "grpo_baseline",
             "latest_checkpoint_path": str(missing_checkpoint_root / "global_step_150"),
+        },
+        {
+            "run_key": "obs_ce_l0p05_s1",
+            "tag": "wm_obs_ce_l0p05_s1",
+            "objective": "obs_ce",
+            "latest_checkpoint_path": str(non_baseline_missing_checkpoint_root / "global_step_150"),
         },
     ]
 
@@ -488,11 +510,14 @@ def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for
     assert rows[1]["diagnostic_readiness"] == "diagnosed"
     assert rows[2].get("diagnostic_command") in ("", None)
     assert rows[2]["diagnostic_readiness"] == "waiting_for_checkpoint"
-    assert rows[3]["diagnostic_transition_jsonl"] == str(
-        work_root / "logs" / "world_model_rollouts" / missing_checkpoint_root.name / "150.wm_transitions.jsonl"
+    assert rows[3]["diagnostic_transition_jsonl"] == str(baseline_val_jsonl)
+    assert rows[3]["diagnostic_readiness"] == "ready_for_diagnostic"
+    assert f"TRANSITIONS_JSONL={baseline_val_jsonl}" in rows[3]["diagnostic_command"]
+    assert rows[4]["diagnostic_transition_jsonl"] == str(
+        work_root / "logs" / "world_model_rollouts" / non_baseline_missing_checkpoint_root.name / "150.wm_transitions.jsonl"
     )
-    assert rows[3].get("diagnostic_command") in ("", None)
-    assert rows[3]["diagnostic_readiness"] == "missing_transition_dump"
+    assert rows[4].get("diagnostic_command") in ("", None)
+    assert rows[4]["diagnostic_readiness"] == "missing_transition_dump"
 
 
 def test_objective_coverage_summarizes_eval_and_diagnostics():

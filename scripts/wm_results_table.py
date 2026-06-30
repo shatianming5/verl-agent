@@ -23,6 +23,9 @@ DEFAULT_WORK = "/mnt/cephfs_home_tianming.sha/grpo_alfworld"
 DEFAULT_EVAL_SCRIPT = "/root/grpo/eval10x_alfworld.sh"
 DEFAULT_TRAIN_SCRIPT = "/root/grpo/run_seed_alfworld_official.sh"
 DEFAULT_DIAGNOSTIC_SCRIPT = "scripts/run_wm_checkpoint_diagnostics.sh"
+BASELINE_VALIDATION_TRANSITION_DUMP = (
+    "logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl"
+)
 RUN_PREFIX_RE = re.compile(r"grpo_qwen2\.5_1\.5b_alfworld_(.+?)(?:_\d{8}_\d{6})?(?:\.log)?$")
 GOAL_RD_EXPECTED_RUNS = [
     "grpo_baseline_s0:objective=grpo_baseline,seed=0,tag=official_4to5",
@@ -1126,7 +1129,12 @@ def transition_jsonl_from_row(row: dict[str, Any], work_root: str, transition_st
     experiment_name = Path(checkpoint_root).name
     if not experiment_name:
         return ""
-    return str(Path(work_root) / "logs" / "world_model_rollouts" / experiment_name / f"{transition_step}.wm_transitions.jsonl")
+    transition_jsonl = Path(work_root) / "logs" / "world_model_rollouts" / experiment_name / f"{transition_step}.wm_transitions.jsonl"
+    if str(row.get("objective") or "") == "grpo_baseline" and not transition_jsonl.is_file():
+        baseline_val_jsonl = Path(work_root) / BASELINE_VALIDATION_TRANSITION_DUMP
+        if baseline_val_jsonl.is_file():
+            return str(baseline_val_jsonl)
+    return str(transition_jsonl)
 
 
 def transition_jsonl_is_available(path: str) -> bool:
