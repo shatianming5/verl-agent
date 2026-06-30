@@ -200,6 +200,31 @@ def test_annotate_train_commands_generates_standard_goal_rd_commands():
     )
 
 
+def test_annotate_train_commands_can_request_rollout_dumps():
+    module = _load_module()
+    rows = [
+        {
+            "run_key": "latent_l0p001_s1",
+            "objective": "latent",
+            "tag": "wmlat_l0p001_s1",
+            "seed": "1",
+            "lambda_latent": "0.001",
+        }
+    ]
+
+    module.annotate_train_commands(
+        rows,
+        train_cuda="4,5",
+        train_script="/root/grpo/run_seed_alfworld_official.sh",
+        dump_rollouts=True,
+    )
+
+    assert rows[0]["train_command"] == (
+        "TAG=wmlat_l0p001_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_LATENT=0.001 CUDA_VISIBLE_DEVICES=4,5 "
+        "bash /root/grpo/run_seed_alfworld_official.sh 1"
+    )
+
+
 def test_annotate_diagnostic_commands_uses_rollout_dir_when_available(tmp_path):
     module = _load_module()
     work_root = tmp_path / "work"
@@ -227,6 +252,7 @@ def test_annotate_diagnostic_commands_uses_rollout_dir_when_available(tmp_path):
 
     assert rows[0]["diagnostic_checkpoint_root"] == str(checkpoint_root)
     assert rows[0]["diagnostic_transition_jsonl"] == str(transition_jsonl)
+    assert rows[0]["diagnostic_readiness"] == "ready_for_diagnostic"
     assert rows[0]["diagnostic_command"] == (
         f"TRANSITIONS_JSONL={transition_jsonl} "
         f"CKPT_ROOT={checkpoint_root} "
@@ -283,13 +309,17 @@ def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for
     )
 
     assert rows[0]["diagnostic_transition_jsonl"] == str(ready_transition_jsonl)
+    assert rows[0]["diagnostic_readiness"] == "ready_for_diagnostic"
     assert "STEPS='init 60 120 150'" in rows[0]["diagnostic_command"]
     assert rows[1]["diagnostic_command"] == "python existing.py"
+    assert rows[1]["diagnostic_readiness"] == "diagnosed"
     assert rows[2].get("diagnostic_command") in ("", None)
+    assert rows[2]["diagnostic_readiness"] == "waiting_for_checkpoint"
     assert rows[3]["diagnostic_transition_jsonl"] == str(
         work_root / "logs" / "world_model_rollouts" / missing_checkpoint_root.name / "150.wm_transitions.jsonl"
     )
     assert rows[3].get("diagnostic_command") in ("", None)
+    assert rows[3]["diagnostic_readiness"] == "missing_transition_dump"
 
 
 def test_objective_coverage_summarizes_eval_and_diagnostics():
@@ -382,6 +412,13 @@ def test_expected_run_coverage_reports_missing_artifacts():
         expected_runs=["obs_ce_l0p01_s0:objective=obs_ce,seed=0,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s0"],
     )
     module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_diagnostic_commands(
+        rows,
+        work_root="/work",
+        diagnostic_script="scripts/run_wm_checkpoint_diagnostics.sh",
+        diagnostic_steps="init 30 60 90 120 150",
+        transition_step="150",
+    )
     module.annotate_artifact_coverage(rows)
 
     assert len(rows) == 1
@@ -391,12 +428,13 @@ def test_expected_run_coverage_reports_missing_artifacts():
     assert rows[0]["has_train_log"] == "no"
     assert rows[0]["has_eval"] == "no"
     assert rows[0]["has_diagnostic"] == "no"
+    assert rows[0]["diagnostic_readiness"] == "missing_training_log"
     assert rows[0]["missing_artifacts"] == "train_log,eval,diagnostic"
     assert rows[0]["final_report_readiness"] == "missing:train_log,eval,diagnostic"
 
     markdown = module.render_markdown(rows)
     assert "## Expected Run Coverage" in markdown
-    assert "| obs_ce_l0p01_s0 | obs_ce | 0 | no | no | no | missing_training_log | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |" in markdown
+    assert "| obs_ce_l0p01_s0 | obs_ce | 0 | no | no | no | missing_training_log | missing_training_log | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |" in markdown
 
 
 def test_expected_run_merges_with_existing_artifacts(tmp_path):
@@ -430,6 +468,13 @@ def test_expected_run_merges_with_existing_artifacts(tmp_path):
         expected_runs=["latent_l0p001_s1"],
     )
     module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_diagnostic_commands(
+        rows,
+        work_root=str(tmp_path),
+        diagnostic_script="scripts/run_wm_checkpoint_diagnostics.sh",
+        diagnostic_steps="init 30 60 90 120 150",
+        transition_step="150",
+    )
     module.annotate_artifact_coverage(rows)
 
     assert len(rows) == 1
@@ -439,6 +484,7 @@ def test_expected_run_merges_with_existing_artifacts(tmp_path):
     assert rows[0]["has_train_log"] == "yes"
     assert rows[0]["has_eval"] == "yes"
     assert rows[0]["has_diagnostic"] == "no"
+    assert rows[0]["diagnostic_readiness"] == "missing_transition_dump"
     assert rows[0]["missing_artifacts"] == "diagnostic"
     assert rows[0]["final_report_readiness"] == "missing:diagnostic"
 
@@ -453,6 +499,13 @@ def test_goal_rd_expected_runs_cover_full_matrix():
         expected_runs=module.GOAL_RD_EXPECTED_RUNS,
     )
     module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_diagnostic_commands(
+        rows,
+        work_root="/work",
+        diagnostic_script="scripts/run_wm_checkpoint_diagnostics.sh",
+        diagnostic_steps="init 30 60 90 120 150",
+        transition_step="150",
+    )
     module.annotate_artifact_coverage(rows)
 
     run_keys = {row["run_key"] for row in rows}
@@ -476,6 +529,7 @@ def test_goal_rd_expected_runs_cover_full_matrix():
     assert obs_l0p05_s1["seed"] == "1"
     assert obs_l0p05_s1["lambda_obs"] == "0.05"
     assert obs_l0p05_s1["tag"] == "wm_obs_ce_l0p05_s1"
+    assert obs_l0p05_s1["diagnostic_readiness"] == "missing_training_log"
     assert obs_l0p05_s1["final_report_readiness"] == "missing:train_log,eval,diagnostic"
 
     coverage = {row["objective"]: row for row in module.objective_coverage(rows)}
@@ -618,6 +672,7 @@ def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monk
     assert "- Eval result inputs: `1`" in markdown
     assert "- Train log inputs: `1`" in markdown
     assert "- Expected run inputs: `11`" in markdown
+    assert "- Train dump rollouts: `True`" in markdown
     assert "## Expected Run Coverage" in markdown
     with output_csv.open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -626,7 +681,7 @@ def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monk
     assert by_key["obs_ce_l0p01_s0"]["has_train_log"] == "yes"
     assert by_key["obs_ce_l0p01_s0"]["has_eval"] == "yes"
     assert by_key["obs_ce_l0p03_s1"]["train_command"] == (
-        "TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
+        "TAG=wm_obs_ce_l0p03_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
         "bash /root/grpo/run_seed_alfworld_official.sh 1"
     )
     assert all("smoke" not in row["train_log_path"] for row in rows)

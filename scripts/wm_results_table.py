@@ -81,6 +81,7 @@ CSV_COLUMNS = [
     "diagnostic_summary_path",
     "diagnostic_transition_jsonl",
     "diagnostic_checkpoint_root",
+    "diagnostic_readiness",
     "diagnostic_command",
     "diagnostic_model_path",
     "diagnostic_output_csv_path",
@@ -151,6 +152,11 @@ def parse_args() -> argparse.Namespace:
         "--train-script",
         default=DEFAULT_TRAIN_SCRIPT,
         help="Training script path to use in generated train commands.",
+    )
+    parser.add_argument(
+        "--train-dump-rollouts",
+        action="store_true",
+        help="Include WM_DUMP_ROLLOUTS=1 in generated train commands so checkpoint diagnostics have fixed transitions.",
     )
     parser.add_argument("--eval-cuda", default="<free_2gpu_pair>", help="CUDA_VISIBLE_DEVICES value to use in generated eval commands.")
     parser.add_argument("--eval-n", default="10", help="N_EVALS value to use in generated eval commands.")
@@ -758,13 +764,15 @@ def build_eval_command(row: dict[str, Any], eval_cuda: str, eval_n: str, eval_sc
     return f"{prefix} bash {shlex.quote(eval_script)}"
 
 
-def build_train_command(row: dict[str, Any], train_cuda: str, train_script: str) -> str:
+def build_train_command(row: dict[str, Any], train_cuda: str, train_script: str, dump_rollouts: bool = False) -> str:
     seed = str(row.get("seed") or "").strip()
     tag = str(row.get("tag") or row.get("run_key") or "").strip()
     if not seed or not tag:
         return ""
 
     assignments = {"TAG": tag}
+    if dump_rollouts:
+        assignments["WM_DUMP_ROLLOUTS"] = "1"
     objective = str(row.get("objective") or "")
     if objective == "obs_ce" and row.get("lambda_obs") not in ("", None):
         assignments["LAMBDA_OBS"] = str(row["lambda_obs"])
@@ -857,11 +865,20 @@ def build_diagnostic_command(
     return f"{prefix} bash {shlex.quote(diagnostic_script)}"
 
 
-def annotate_train_commands(rows: list[dict[str, Any]], train_cuda: str, train_script: str) -> None:
+def has_diagnostic_result(row: dict[str, Any]) -> bool:
+    return bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+
+
+def annotate_train_commands(rows: list[dict[str, Any]], train_cuda: str, train_script: str, dump_rollouts: bool = False) -> None:
     for row in rows:
         if row.get("train_command"):
             continue
-        row["train_command"] = build_train_command(row, train_cuda=train_cuda, train_script=train_script)
+        row["train_command"] = build_train_command(
+            row,
+            train_cuda=train_cuda,
+            train_script=train_script,
+            dump_rollouts=dump_rollouts,
+        )
 
 
 def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: str, eval_script: str) -> None:
@@ -900,18 +917,29 @@ def annotate_diagnostic_commands(
     transition_step: str,
 ) -> None:
     for row in rows:
-        if row.get("diagnostic_command") or row.get("diagnostic_summary_path"):
+        if has_diagnostic_result(row):
+            row["diagnostic_readiness"] = "diagnosed"
+            continue
+        if row.get("diagnostic_command"):
+            row["diagnostic_readiness"] = "ready_for_diagnostic"
+            continue
+        if not checkpoint_root_from_row(row):
+            row["diagnostic_readiness"] = "missing_training_log" if not row.get("train_log_path") else "waiting_for_checkpoint"
             continue
         if not has_diagnostic_target_checkpoint(row, transition_step=transition_step):
+            row["diagnostic_readiness"] = "waiting_for_checkpoint"
             continue
         checkpoint_root = checkpoint_root_from_row(row)
         transition_jsonl = transition_jsonl_from_row(row, work_root=work_root, transition_step=transition_step)
         if not checkpoint_root or not transition_jsonl:
+            row["diagnostic_readiness"] = "missing_transition_dump"
             continue
         row["diagnostic_checkpoint_root"] = checkpoint_root
         row["diagnostic_transition_jsonl"] = transition_jsonl
         if not transition_jsonl_is_available(transition_jsonl):
+            row["diagnostic_readiness"] = "missing_transition_dump"
             continue
+        row["diagnostic_readiness"] = "ready_for_diagnostic"
         row["diagnostic_command"] = build_diagnostic_command(
             row,
             work_root=work_root,
@@ -1079,6 +1107,9 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "eval_incomplete": 0,
                 "missing_training_log": 0,
                 "diagnosed": 0,
+                "ready_for_diagnostic": 0,
+                "waiting_for_diagnostic_checkpoint": 0,
+                "missing_transition_dump": 0,
             },
         )
         group["runs"] += 1
@@ -1089,6 +1120,13 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             group[readiness] += 1
         if row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None):
             group["diagnosed"] += 1
+        diagnostic_readiness = str(row.get("diagnostic_readiness") or "")
+        if diagnostic_readiness == "ready_for_diagnostic":
+            group["ready_for_diagnostic"] += 1
+        elif diagnostic_readiness == "waiting_for_checkpoint":
+            group["waiting_for_diagnostic_checkpoint"] += 1
+        elif diagnostic_readiness == "missing_transition_dump":
+            group["missing_transition_dump"] += 1
 
     result = []
     for group in groups.values():
@@ -1124,6 +1162,7 @@ def build_report_generation_metadata(
         ("Expected run inputs", str(len(expected_runs))),
         ("Train CUDA", str(args.train_cuda)),
         ("Train script", str(args.train_script)),
+        ("Train dump rollouts", str(bool(args.train_dump_rollouts))),
         ("Eval CUDA", str(args.eval_cuda)),
         ("Eval n", str(args.eval_n)),
         ("Eval script", str(args.eval_script)),
@@ -1162,6 +1201,7 @@ def render_markdown(
         ("eval", "eval mean +/- std"),
         ("eval_n", "eval n"),
         ("eval_readiness", "eval readiness"),
+        ("diagnostic_readiness", "diag readiness"),
         ("val_success_last", "last online val"),
         ("wm_metric_last", "last WM metric"),
         ("train_step", "train step"),
@@ -1231,6 +1271,9 @@ def render_markdown(
             ("eval_incomplete", "eval incomplete"),
             ("missing_training_log", "missing train log"),
             ("diagnosed", "diagnosed"),
+            ("ready_for_diagnostic", "diag ready"),
+            ("waiting_for_diagnostic_checkpoint", "diag waiting"),
+            ("missing_transition_dump", "missing transitions"),
         ]
         lines.append("| " + " | ".join(title for _, title in coverage_columns) + " |")
         lines.append("| " + " | ".join("---" for _ in coverage_columns) + " |")
@@ -1252,6 +1295,14 @@ def render_markdown(
             for row in ready_rows:
                 target = str(row.get("eval_target_checkpoint_path") or row.get("latest_checkpoint_path") or "")
                 lines.append(f"- `{row.get('run_key', '')}` checkpoint `{target}`: `{row['eval_command']}`")
+        lines.append("")
+
+    diagnostic_readiness_counts = Counter(str(row.get("diagnostic_readiness") or "unknown") for row in rows)
+    if diagnostic_readiness_counts:
+        lines.append("## Diagnostic Readiness")
+        lines.append("")
+        for readiness, count in sorted(diagnostic_readiness_counts.items()):
+            lines.append(f"- {readiness}: `{count}`")
         lines.append("")
 
     diagnostic_command_rows = [
@@ -1282,6 +1333,7 @@ def render_markdown(
             ("has_eval", "eval"),
             ("has_diagnostic", "diagnostic"),
             ("eval_readiness", "eval readiness"),
+            ("diagnostic_readiness", "diagnostic readiness"),
             ("missing_artifacts", "missing artifacts"),
             ("final_report_readiness", "final readiness"),
         ]
@@ -1363,6 +1415,7 @@ def main() -> None:
     if args.goal_rd_report:
         args.discover_standard_layout = True
         args.expected_goal_rd_runs = True
+        args.train_dump_rollouts = True
     if args.discover_standard_layout:
         eval_paths, train_log_paths, diagnostic_paths = discover_standard_layout_paths(args.work_root)
         args.eval_result.extend(eval_paths)
@@ -1375,7 +1428,12 @@ def main() -> None:
     if args.expected_goal_rd_runs:
         expected_runs.extend(GOAL_RD_EXPECTED_RUNS)
     rows = build_records(eval_paths, train_logs, diagnostic_paths, expected_runs=expected_runs)
-    annotate_train_commands(rows, train_cuda=args.train_cuda, train_script=args.train_script)
+    annotate_train_commands(
+        rows,
+        train_cuda=args.train_cuda,
+        train_script=args.train_script,
+        dump_rollouts=args.train_dump_rollouts,
+    )
     annotate_eval_readiness(rows, eval_cuda=args.eval_cuda, eval_n=args.eval_n, eval_script=args.eval_script)
     annotate_diagnostic_commands(
         rows,
