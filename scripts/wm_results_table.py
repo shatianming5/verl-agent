@@ -1816,7 +1816,7 @@ def latent_interpretation(rows: list[dict[str, Any]]) -> str:
     )
     evidence = "eval and diagnostic evidence" if len(latent_values) == len(latent_rows) else "partial eval and diagnostic evidence"
     return (
-        f"Latent alignment: {evidence} are available; {eval_part}; "
+        f"Latent alignment: {evidence} is available; {eval_part}; "
         f"{diagnostic_part}."
     )
 
