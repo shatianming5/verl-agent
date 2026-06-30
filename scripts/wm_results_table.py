@@ -1198,10 +1198,23 @@ def checkpoint_backup_path(checkpoint_path: Any, work_root: str) -> str:
     return str(work / "checkpoints_backup" / relative)
 
 
+def row_checkpoint_path_for_backup(row: dict[str, Any]) -> str:
+    latest_step = coerce_int(row.get("latest_checkpoint_step"))
+    eval_step = coerce_int(row.get("checkpoint_step")) or latest_step
+    for key, step in (
+        ("latest_checkpoint_path", latest_step),
+        ("eval_target_checkpoint_path", eval_step),
+        ("eval_checkpoint_path", eval_step),
+    ):
+        checkpoint_path = checkpoint_path_for_step(row.get(key), step)
+        if checkpoint_path:
+            return checkpoint_path
+    return ""
+
+
 def annotate_checkpoint_backups(rows: list[dict[str, Any]], work_root: str) -> None:
     for row in rows:
-        latest_step = coerce_int(row.get("latest_checkpoint_step"))
-        latest_checkpoint_path = checkpoint_path_for_step(row.get("latest_checkpoint_path"), latest_step)
+        latest_checkpoint_path = row_checkpoint_path_for_backup(row)
         backup_path = checkpoint_backup_path(latest_checkpoint_path, work_root)
         row["checkpoint_backup_path"] = backup_path
         if not latest_checkpoint_path:

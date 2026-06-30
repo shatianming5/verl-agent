@@ -273,6 +273,28 @@ def test_annotate_checkpoint_backups_marks_backup_coverage(tmp_path):
     assert rows[2]["checkpoint_backup_path"] == ""
 
 
+def test_annotate_checkpoint_backups_falls_back_to_eval_checkpoint(tmp_path):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    eval_checkpoint = work_root / "checkpoints" / "run_eval" / "global_step_150"
+    eval_backup = work_root / "checkpoints_backup" / "run_eval" / "global_step_150"
+    eval_checkpoint.mkdir(parents=True)
+    eval_backup.mkdir(parents=True)
+    rows = [
+        {
+            "run_key": "run_eval",
+            "latest_checkpoint_step": 150,
+            "latest_checkpoint_path": "",
+            "eval_target_checkpoint_path": str(eval_checkpoint),
+        }
+    ]
+
+    module.annotate_checkpoint_backups(rows, work_root=str(work_root))
+
+    assert rows[0]["checkpoint_backup_status"] == "backed_up"
+    assert rows[0]["checkpoint_backup_path"] == str(eval_backup)
+
+
 def test_annotate_train_commands_generates_standard_goal_rd_commands():
     module = _load_module()
     rows = [
