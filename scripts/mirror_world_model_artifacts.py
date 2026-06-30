@@ -19,6 +19,7 @@ DIAGNOSTIC_REPORT_FILES = (
     "checkpoint_diagnostics_report.md",
     "checkpoint_diagnostics_report.csv",
     "checkpoint_diagnostics_report.svg",
+    "checkpoint_scores_summary.json",
 )
 
 

@@ -52,6 +52,7 @@ def test_mirror_artifacts_copies_small_reports_and_writes_manifest(tmp_path):
     assert "world_model_diagnostics/diag_a/checkpoint_diagnostics_report.md" in copied_names
     assert "world_model_diagnostics/diag_a/checkpoint_diagnostics_report.csv" in copied_names
     assert "world_model_diagnostics/diag_a/checkpoint_diagnostics_report.svg" in copied_names
+    assert "world_model_diagnostics/diag_a/checkpoint_scores_summary.json" in copied_names
     assert "world_model_diagnostics/diag_a/checkpoint_scores.csv" not in copied_names
 
     readme = (output_root / "README.md").read_text(encoding="utf-8")
