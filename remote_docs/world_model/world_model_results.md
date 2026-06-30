@@ -9,9 +9,9 @@
 ## Report Generation
 
 - Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`
-- Report revision: `cfcec7b365b938d009d26d86d639fae5a0331630`
+- Report revision: `90885221f01ec8d96308865bd00de34746f625e1`
 - Eval result inputs: `6`
-- Train log inputs: `45`
+- Train log inputs: `47`
 - Diagnostic summary inputs: `4`
 - Expected run inputs: `11`
 - Train CUDA: `<free_2gpu_pair>`
@@ -29,12 +29,12 @@
 - Branch name: `world-model-latent-objective`
 - Code/config summary: `obs CE objective, latent hidden-state objective, rollout transition dumps, checkpoint diagnostics, and report aggregation are tracked in this branch`
 - Exact commands/configs: `per-run launch lines and generated train/eval/diagnostic commands are listed in Artifact Paths`
-- Result table status: `4/11 tracked run(s) have eval results; eval readiness {'eval_incomplete': 2, 'evaluated': 4, 'missing_training_log': 3, 'waiting_for_checkpoint': 2}`
-- Diagnostic paths status: `4/11 tracked run(s) have checkpoint diagnostics; diagnostic readiness {'diagnosed': 4, 'missing_training_log': 3, 'missing_transition_dump': 2, 'waiting_for_checkpoint': 2}`
-- Raw observation CE interpretation: `Raw observation CE: positive so far; mean eval 0.7311 vs baseline 0.7065, delta +0.0246.`
+- Result table status: `5/11 tracked run(s) have eval results; eval readiness {'eval_incomplete': 1, 'evaluated': 5, 'missing_training_log': 2, 'waiting_for_checkpoint': 3}`
+- Diagnostic paths status: `4/11 tracked run(s) have checkpoint diagnostics; diagnostic readiness {'diagnosed': 4, 'missing_training_log': 2, 'missing_transition_dump': 2, 'waiting_for_checkpoint': 3}`
+- Raw observation CE interpretation: `Raw observation CE: negative so far; mean eval 0.6714 vs baseline 0.7065, delta -0.0351.`
 - World-model feature interpretation: `Observation prediction features: evidence available; success/failure CE or cosine gaps are reported for 4 diagnostic run(s).`
 - Latent alignment interpretation: `Latent alignment: pending; no latent eval10x result is available yet.`
-- Training log coverage: `8/11 tracked run(s) have training logs`
+- Training log coverage: `9/11 tracked run(s) have training logs`
 
 | run | tag | objective | seed | lambda_obs | lambda_latent | eval mean +/- std | eval n | eval readiness | diag readiness | last online val | last WM metric | train step | ckpt backup | diag CE | delta CE | diag cosine | delta cosine | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -42,21 +42,21 @@
 | grpo_baseline_s1 | official_6to7 | grpo_baseline | 1 |  |  | 0.6984 +/- 0.0375 (n=10) | 10 | evaluated | missing_transition_dump | 0.7340 |  | 150 | backed_up |  |  |  |  | evaluated;training_seen;training_complete |
 | grpo_baseline_s2 | official_s2 | grpo_baseline | 2 |  |  | 0.6922 +/- 0.0321 (n=10) | 10 | evaluated | missing_transition_dump | 0.7190 |  | 150 | missing_backup |  |  |  |  | evaluated;training_seen;training_complete |
 | obs_ce_l0p01_s0 | wm_obs_ce_l0p01_s0 | obs_ce | 0 | 0.01 |  | 0.7311 +/- 0.0244 (n=10) | 10 | evaluated | diagnosed | 0.7500 | obs_ce_loss=0.161 | 150 | missing_backup | CE 0.2732 | -1.1620 | 0.1509 | -0.0177 | evaluated;training_complete;diagnosed |
-| obs_ce_l0p01_s1 | wm_obs_ce_l0p01_s1 | obs_ce | 1 | 0.01 |  |  | 7 | eval_incomplete | diagnosed | 0.6410 | obs_ce_loss=0.147 | 150 | missing_backup | CE 0.2688 | -1.1601 | 0.1626 | -0.0495 | eval_incomplete;training_complete;diagnosed |
-| obs_ce_l0p03_s0 | wm_obs_ce_l0p03_s0 | obs_ce | 0 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0780 |  | 0 | missing_backup |  |  |  |  | training_seen |
-| obs_ce_l0p03_s1 | wm_obs_ce_l0p03_s1 | obs_ce | 1 | 0.03 |  |  |  | missing_training_log | missing_training_log |  |  |  | no_checkpoint |  |  |  |  |  |
+| obs_ce_l0p01_s1 | wm_obs_ce_l0p01_s1 | obs_ce | 1 | 0.01 |  | 0.6118 +/- 0.0324 (n=10) | 10 | evaluated | diagnosed | 0.6410 | obs_ce_loss=0.147 | 150 | missing_backup | CE 0.2688 | -1.1601 | 0.1626 | -0.0495 | evaluated;training_complete;diagnosed |
+| obs_ce_l0p03_s0 | wm_obs_ce_l0p03_s0 | obs_ce | 0 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0780 | obs_ce_loss=1.073 | 2 | missing_backup |  |  |  |  | training_seen |
+| obs_ce_l0p03_s1 | wm_obs_ce_l0p03_s1 | obs_ce | 1 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint |  |  |  | missing_backup |  |  |  |  | training_seen |
 | obs_ce_l0p05_s0 | wm_obs_ce_l0p05_s0 | obs_ce | 0 | 0.05 |  |  |  | missing_training_log | missing_training_log |  |  |  | no_checkpoint |  |  |  |  |  |
 | obs_ce_l0p05_s1 | wm_obs_ce_l0p05_s1 | obs_ce | 1 | 0.05 |  |  |  | missing_training_log | missing_training_log |  |  |  | no_checkpoint |  |  |  |  |  |
 | latent_s0 | wmls_l1 | latent | 0 |  |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint |  | latent_loss=1.007, cosine=-0.007 | 1 | no_checkpoint |  |  |  |  | training_complete |
-| latent_l0p001_s0 | wmlat_l0p001_s0 | latent | 0 |  | 0.001 |  | 2 | eval_incomplete | diagnosed | 0.7270 | latent_loss=0.317, cosine=0.683 | 150 | missing_backup | CE 1.4187 | -0.0064 | 0.1378 | -0.0384 | eval_incomplete;training_complete;diagnosed |
-| latent_l0p001_s1 | wmlat_l0p001_s1 | latent | 1 |  | 0.001 |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.6800 | latent_loss=0.375, cosine=0.625 | 90 | missing_backup |  |  |  |  | training_seen |
+| latent_l0p001_s0 | wmlat_l0p001_s0 | latent | 0 |  | 0.001 |  | 5 | eval_incomplete | diagnosed | 0.7270 | latent_loss=0.317, cosine=0.683 | 150 | missing_backup | CE 1.4187 | -0.0064 | 0.1378 | -0.0384 | eval_incomplete;training_complete;diagnosed |
+| latent_l0p001_s1 | wmlat_l0p001_s1 | latent | 1 |  | 0.001 |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.6800 | latent_loss=0.348, cosine=0.652 | 92 | missing_backup |  |  |  |  | training_seen |
 
 ## Result Summary
 
 | condition | objective | lambda_obs | lambda_latent | runs | evaluated | seeds | mean eval | run std | mean eval std | delta vs baseline |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | GRPO baseline | grpo_baseline |  |  | 3 | 3 | 0,1,2 | 0.7065 | 0.0197 | 0.0326 | 0.0000 |
-| obs_ce lambda_obs=0.01 | obs_ce | 0.01 |  | 2 | 1 | 0,1 | 0.7311 |  | 0.0244 | 0.0246 |
+| obs_ce lambda_obs=0.01 | obs_ce | 0.01 |  | 2 | 2 | 0,1 | 0.6714 | 0.0844 | 0.0284 | -0.0351 |
 | obs_ce lambda_obs=0.03 | obs_ce | 0.03 |  | 2 | 0 | 0,1 |  |  |  |  |
 | obs_ce lambda_obs=0.05 | obs_ce | 0.05 |  | 2 | 0 | 0,1 |  |  |  |  |
 | latent lambda_latent=0.001 | latent |  | 0.001 | 2 | 0 | 0,1 |  |  |  |  |
@@ -66,22 +66,22 @@
 | objective | runs | seeds | evaluated | ready | waiting | eval incomplete | missing train log | diagnosed | diag ready | diag waiting | missing transitions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | grpo_baseline | 3 | 0,1,2 | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 2 |
-| obs_ce | 6 | 0,1 | 1 | 0 | 1 | 1 | 3 | 2 | 0 | 1 | 0 |
+| obs_ce | 6 | 0,1 | 2 | 0 | 2 | 0 | 2 | 2 | 0 | 2 | 0 |
 | latent | 2 | 0,1 | 0 | 0 | 1 | 1 | 0 | 1 | 0 | 1 | 0 |
 
 ## Eval Readiness
 
-- eval_incomplete: `2`
-- evaluated: `4`
-- missing_training_log: `3`
-- waiting_for_checkpoint: `2`
+- eval_incomplete: `1`
+- evaluated: `5`
+- missing_training_log: `2`
+- waiting_for_checkpoint: `3`
 
 ## Diagnostic Readiness
 
 - diagnosed: `4`
-- missing_training_log: `3`
+- missing_training_log: `2`
 - missing_transition_dump: `2`
-- waiting_for_checkpoint: `2`
+- waiting_for_checkpoint: `3`
 
 ## Expected Run Coverage
 
@@ -91,9 +91,9 @@
 | grpo_baseline_s1 | grpo_baseline | 1 | yes | yes | no | evaluated | missing_transition_dump | diagnostic | missing:diagnostic |
 | grpo_baseline_s2 | grpo_baseline | 2 | yes | yes | no | evaluated | missing_transition_dump | diagnostic | missing:diagnostic |
 | obs_ce_l0p01_s0 | obs_ce | 0 | yes | yes | yes | evaluated | diagnosed |  | complete |
-| obs_ce_l0p01_s1 | obs_ce | 1 | yes | no | yes | eval_incomplete | diagnosed | eval | missing:eval |
+| obs_ce_l0p01_s1 | obs_ce | 1 | yes | yes | yes | evaluated | diagnosed |  | complete |
 | obs_ce_l0p03_s0 | obs_ce | 0 | yes | no | no | waiting_for_checkpoint | waiting_for_checkpoint | eval,diagnostic | missing:eval,diagnostic |
-| obs_ce_l0p03_s1 | obs_ce | 1 | no | no | no | missing_training_log | missing_training_log | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |
+| obs_ce_l0p03_s1 | obs_ce | 1 | yes | no | no | waiting_for_checkpoint | waiting_for_checkpoint | eval,diagnostic | missing:eval,diagnostic |
 | obs_ce_l0p05_s0 | obs_ce | 0 | no | no | no | missing_training_log | missing_training_log | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |
 | obs_ce_l0p05_s1 | obs_ce | 1 | no | no | no | missing_training_log | missing_training_log | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |
 | latent_l0p001_s0 | latent | 0 | yes | no | yes | eval_incomplete | diagnosed | eval | missing:eval |
@@ -210,7 +210,11 @@
 
 ### obs_ce_l0p03_s1
 - Tag: `wm_obs_ce_l0p03_s1`
-- Train command: `TAG=wm_obs_ce_l0p03_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' bash /root/grpo/run_seed_alfworld_official.sh 1`
+- Latest checkpoint: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p03_s1`
+- Latest checkpoint backup: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints_backup/grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p03_s1`
+- Train log: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p03_s1_20260630_112244.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/wm_obs_ce_l0p03_s1_launch_20260630_112243.log`
+- Launch line: `RUN_WM_OBS_CE_SEED seed=1 tag=wm_obs_ce_l0p03_s1 cuda=6,7 lambda_obs=0.03 total_epochs=150 ray_tmp=/root/grpo/ray_tmp_wm_obs_ce_l0p03_s1 rollout_data_dir=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_rollouts/wm_obs_ce_l0p03_s1_seed1 ; RUN_ALFWORLD_OFFICIAL seed=1 tag=wm_obs_ce_l0p03_s1 cuda=6,7 tp=2 micro=16 gmu=0.6 enforce_eager=True free_cache=True use_remove_padding=True ray_tmp=/root/grpo/ray_tmp_wm_obs_ce_l0p03_s1 ckpt=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p03_s1`
+- Train command: `TAG=wm_obs_ce_l0p03_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 bash /root/grpo/run_seed_alfworld_official.sh 1`
 
 ### obs_ce_l0p05_s0
 - Tag: `wm_obs_ce_l0p05_s0`
