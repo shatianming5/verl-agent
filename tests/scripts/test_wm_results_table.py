@@ -935,6 +935,19 @@ def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monk
         ),
         encoding="utf-8",
     )
+    eval_detail_log = logs_dir / "eval10x_wm_obs_ce_l0p01_s0_0_20260630_090243.log"
+    eval_detail_log.write_text(
+        "\n".join(
+            [
+                "trainer.experiment_name=eval10x_wm_obs_ce_l0p01_s0_0",
+                "val/success_rate:0.750",
+                "global_step_150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eval_launch_log = logs_dir / "eval10x_wm_obs_ce_l0p01_s0_launch_20260630_090241.log"
+    eval_launch_log.write_text("EVAL_STARTED label=wm_obs_ce_l0p01_s0\n", encoding="utf-8")
     output_md = tmp_path / "report.md"
     output_csv = tmp_path / "report.csv"
 
@@ -970,6 +983,7 @@ def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monk
         rows = list(csv.DictReader(handle))
     assert len(rows) == 11
     by_key = {row["run_key"]: row for row in rows}
+    assert "latent_l0p01_s0" not in by_key
     assert by_key["obs_ce_l0p01_s0"]["has_train_log"] == "yes"
     assert by_key["obs_ce_l0p01_s0"]["has_eval"] == "yes"
     assert by_key["obs_ce_l0p03_s1"]["train_command"] == (
@@ -1639,6 +1653,7 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     with output_csv.open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 1
+    assert b"\r\n" not in output_csv.read_bytes()
     row = rows[0]
     assert row["run_key"] == "obs_ce_l0p01_s0"
     assert row["eval_mean"] == "0.75"

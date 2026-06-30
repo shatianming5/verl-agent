@@ -253,13 +253,17 @@ def discover_standard_layout_paths(work_root: str) -> tuple[list[str], list[str]
     eval_globs, train_log_globs, diagnostic_globs = standard_layout_globs(work_root)
     return (
         exclude_smoke_paths(expand_paths([], eval_globs)),
-        exclude_smoke_paths(expand_paths([], train_log_globs)),
+        exclude_eval_logs_from_train_logs(exclude_smoke_paths(expand_paths([], train_log_globs))),
         exclude_smoke_paths(expand_paths([], diagnostic_globs)),
     )
 
 
 def exclude_smoke_paths(paths: list[str]) -> list[str]:
     return [path for path in paths if "smoke" not in str(Path(path)).lower()]
+
+
+def exclude_eval_logs_from_train_logs(paths: list[str]) -> list[str]:
+    return [path for path in paths if not Path(path).name.startswith("eval10x_")]
 
 
 def coerce_float(value: Any) -> float | None:
@@ -1970,7 +1974,7 @@ def write_csv(path: str, rows: list[dict[str, Any]]) -> None:
                 fieldnames.append(key)
 
     def writer(handle: Any) -> None:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
