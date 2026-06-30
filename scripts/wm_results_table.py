@@ -64,6 +64,8 @@ CSV_COLUMNS = [
     "wm_metric_last",
     "latest_checkpoint_step",
     "latest_checkpoint_path",
+    "checkpoint_backup_path",
+    "checkpoint_backup_status",
     "diagnostic_final_step",
     "diagnostic_token_mean_ce",
     "diagnostic_delta_token_mean_ce",
@@ -1180,6 +1182,38 @@ def has_diagnostic_result(row: dict[str, Any]) -> bool:
     return has_complete_diagnostic_result(row)
 
 
+def checkpoint_backup_path(checkpoint_path: Any, work_root: str) -> str:
+    path = str(checkpoint_path or "").strip()
+    if not path:
+        return ""
+    checkpoint = Path(path)
+    work = Path(work_root)
+    try:
+        relative = checkpoint.relative_to(work / "checkpoints")
+    except ValueError:
+        marker = f"{os.sep}checkpoints{os.sep}"
+        if marker not in path:
+            return ""
+        return path.replace(marker, f"{os.sep}checkpoints_backup{os.sep}", 1)
+    return str(work / "checkpoints_backup" / relative)
+
+
+def annotate_checkpoint_backups(rows: list[dict[str, Any]], work_root: str) -> None:
+    for row in rows:
+        latest_step = coerce_int(row.get("latest_checkpoint_step"))
+        latest_checkpoint_path = checkpoint_path_for_step(row.get("latest_checkpoint_path"), latest_step)
+        backup_path = checkpoint_backup_path(latest_checkpoint_path, work_root)
+        row["checkpoint_backup_path"] = backup_path
+        if not latest_checkpoint_path:
+            row["checkpoint_backup_status"] = "no_checkpoint"
+        elif backup_path and Path(backup_path).exists():
+            row["checkpoint_backup_status"] = "backed_up"
+        elif backup_path:
+            row["checkpoint_backup_status"] = "missing_backup"
+        else:
+            row["checkpoint_backup_status"] = "unknown_layout"
+
+
 def annotate_train_commands(rows: list[dict[str, Any]], train_cuda: str, train_script: str, dump_rollouts: bool = False) -> None:
     for row in rows:
         if row.get("train_command"):
@@ -1692,6 +1726,7 @@ def render_markdown(
         ("val_success_last", "last online val"),
         ("wm_metric_last", "last WM metric"),
         ("train_step", "train step"),
+        ("checkpoint_backup_status", "ckpt backup"),
         ("diagnostic_token_mean_ce", "diag CE"),
         ("diagnostic_delta_token_mean_ce", "delta CE"),
         ("diagnostic_action_obs_cosine", "diag cosine"),
@@ -1841,6 +1876,7 @@ def render_markdown(
             ("eval_result_path", "Eval result"),
             ("eval_checkpoint_path", "Eval checkpoint"),
             ("latest_checkpoint_path", "Latest checkpoint"),
+            ("checkpoint_backup_path", "Latest checkpoint backup"),
             ("diagnostic_report_md_path", "Diagnostic report"),
             ("diagnostic_report_csv_path", "Diagnostic report CSV"),
             ("diagnostic_report_svg_path", "Diagnostic report SVG"),
@@ -1964,6 +2000,7 @@ def main() -> None:
         diagnostic_steps=args.diagnostic_steps,
         transition_step=args.diagnostic_transition_step,
     )
+    annotate_checkpoint_backups(rows, work_root=args.work_root)
     annotate_artifact_coverage(rows)
     branch = args.branch if args.branch is not None else git_branch()
     report_generation = build_report_generation_metadata(args, eval_paths, train_logs, diagnostic_paths, expected_runs)

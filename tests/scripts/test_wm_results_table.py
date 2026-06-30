@@ -240,6 +240,39 @@ def test_merged_train_logs_keep_latest_checkpoint_step_and_path_paired(tmp_path)
         assert ";" not in row["eval_command"]
 
 
+def test_annotate_checkpoint_backups_marks_backup_coverage(tmp_path):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    backed_checkpoint = work_root / "checkpoints" / "run_a" / "global_step_150"
+    missing_checkpoint = work_root / "checkpoints" / "run_b" / "global_step_135"
+    backed_backup = work_root / "checkpoints_backup" / "run_a" / "global_step_150"
+    backed_checkpoint.mkdir(parents=True)
+    missing_checkpoint.mkdir(parents=True)
+    backed_backup.mkdir(parents=True)
+    rows = [
+        {
+            "run_key": "run_a",
+            "latest_checkpoint_step": 150,
+            "latest_checkpoint_path": str(backed_checkpoint),
+        },
+        {
+            "run_key": "run_b",
+            "latest_checkpoint_step": 135,
+            "latest_checkpoint_path": str(missing_checkpoint),
+        },
+        {"run_key": "run_c"},
+    ]
+
+    module.annotate_checkpoint_backups(rows, work_root=str(work_root))
+
+    assert rows[0]["checkpoint_backup_status"] == "backed_up"
+    assert rows[0]["checkpoint_backup_path"] == str(backed_backup)
+    assert rows[1]["checkpoint_backup_status"] == "missing_backup"
+    assert rows[1]["checkpoint_backup_path"] == str(work_root / "checkpoints_backup" / "run_b" / "global_step_135")
+    assert rows[2]["checkpoint_backup_status"] == "no_checkpoint"
+    assert rows[2]["checkpoint_backup_path"] == ""
+
+
 def test_annotate_train_commands_generates_standard_goal_rd_commands():
     module = _load_module()
     rows = [
