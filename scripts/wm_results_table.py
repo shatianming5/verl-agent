@@ -104,6 +104,7 @@ CSV_COLUMNS = [
     "command_summary",
     "eval_start_line",
     "expected",
+    "metadata_conflicts",
     "has_train_log",
     "has_eval",
     "has_diagnostic",
@@ -128,6 +129,8 @@ NUMERIC_COLUMNS = {
     "diagnostic_rows_with_targets",
     "diagnostic_target_tokens",
 }
+
+METADATA_KEYS = ("method", "objective", "tag", "seed", "lambda_obs", "lambda_latent")
 
 
 def parse_args() -> argparse.Namespace:
@@ -813,15 +816,33 @@ def checkpoint_path_for_step(value: Any, step: int | None) -> str:
     return parts[0]
 
 
+def metadata_values_conflict(key: str, existing: Any, incoming: Any) -> bool:
+    if existing in ("", None) or incoming in ("", None):
+        return False
+    if key in {"lambda_obs", "lambda_latent"}:
+        existing_number = coerce_float(existing)
+        incoming_number = coerce_float(incoming)
+        if existing_number is not None and incoming_number is not None:
+            return not math.isclose(existing_number, incoming_number, rel_tol=1e-9, abs_tol=1e-12)
+    return str(existing) != str(incoming)
+
+
+def record_metadata_conflict(record: dict[str, Any], key: str, existing: Any, incoming: Any) -> None:
+    conflict = f"{key}={existing}!={incoming}"
+    record["metadata_conflicts"] = append_unique(record.get("metadata_conflicts", ""), conflict)
+
+
 def merge_record(records: dict[str, dict[str, Any]], row: dict[str, Any]) -> None:
     run_key = str(row.get("run_key") or "unknown")
     record = records.setdefault(run_key, empty_record(run_key))
-    for key in ("method", "objective", "tag", "seed", "lambda_obs", "lambda_latent"):
+    for key in METADATA_KEYS:
         if not record.get(key) and row.get(key):
             record[key] = row[key]
+        elif metadata_values_conflict(key, record.get(key), row.get(key)):
+            record_metadata_conflict(record, key, record.get(key), row.get(key))
 
     for key, value in row.items():
-        if key in {"run_key", "method", "objective", "tag", "seed", "lambda_obs", "lambda_latent"} or value in ("", None):
+        if key in {"run_key", *METADATA_KEYS} or value in ("", None):
             continue
         if key == "latest_checkpoint_path":
             incoming_step = coerce_int(row.get("latest_checkpoint_step"))
@@ -1154,6 +1175,8 @@ def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
             missing.append("eval")
         if not has_diagnostic:
             missing.append("diagnostic")
+        if row.get("metadata_conflicts"):
+            missing.append("metadata_conflict")
         missing.extend(missing_diagnostic_reports)
         row["missing_artifacts"] = ",".join(missing)
         if row.get("expected") == "yes":
@@ -1712,6 +1735,8 @@ def render_markdown(
             lines.append(f"- Command summary: `{row['command_summary']}`")
         if row.get("eval_start_line"):
             lines.append(f"- Eval line: `{row['eval_start_line']}`")
+        if row.get("metadata_conflicts"):
+            lines.append(f"- Metadata conflicts: `{row['metadata_conflicts']}`")
         if row.get("eval_command"):
             lines.append(f"- Eval command: `{row['eval_command']}`")
         if row.get("train_command"):

@@ -647,6 +647,38 @@ def test_expected_run_merges_with_existing_artifacts(tmp_path):
     assert rows[0]["final_report_readiness"] == "missing:diagnostic"
 
 
+def test_expected_run_flags_metadata_conflicts(tmp_path):
+    module = _load_module()
+    eval_path = tmp_path / "eval10x_obs_ce_l0p01_s0_results.txt"
+    eval_path.write_text(
+        "\n".join(
+            [
+                "EVAL10X_START label=obs_ce_l0p01_s0 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wrong_tag/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=4,5 Tue",
+                "EVAL10X_RESULT n=10 mean=0.7400 std=0.0300",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    rows = module.build_records(
+        eval_paths=[str(eval_path)],
+        train_logs=[],
+        diagnostic_paths=[],
+        expected_runs=["obs_ce_l0p01_s0:objective=obs_ce,seed=0,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s0"],
+    )
+    module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_artifact_coverage(rows)
+
+    assert len(rows) == 1
+    assert rows[0]["metadata_conflicts"] == "tag=wm_obs_ce_l0p01_s0!=wrong_tag"
+    assert rows[0]["has_eval"] == "yes"
+    assert rows[0]["missing_artifacts"] == "train_log,diagnostic,metadata_conflict"
+    assert rows[0]["final_report_readiness"] == "missing:train_log,diagnostic,metadata_conflict"
+
+    markdown = module.render_markdown(rows)
+    assert "- Metadata conflicts: `tag=wm_obs_ce_l0p01_s0!=wrong_tag`" in markdown
+
+
 def test_goal_rd_expected_runs_cover_full_matrix():
     module = _load_module()
 
