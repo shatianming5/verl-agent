@@ -61,6 +61,15 @@ CSV_COLUMNS = [
     "diagnostic_best_step",
     "diagnostic_report_md_path",
     "diagnostic_summary_path",
+    "diagnostic_command",
+    "diagnostic_model_path",
+    "diagnostic_output_csv_path",
+    "diagnostic_checkpoint_count",
+    "diagnostic_max_length",
+    "diagnostic_batch_size",
+    "diagnostic_max_rows",
+    "diagnostic_device",
+    "diagnostic_dtype",
     "train_log_path",
     "launch_line",
     "command_summary",
@@ -527,6 +536,7 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
     failure_ce = coerce_float(failure.get("token_mean_ce"))
     success_cosine = coerce_float(success.get("row_mean_action_obs_cosine"))
     failure_cosine = coerce_float(failure.get("row_mean_action_obs_cosine"))
+    provenance = diagnostic_provenance_fields(summary)
 
     return {
         **meta,
@@ -542,6 +552,7 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         "diagnostic_delta_action_obs_cosine": numeric_delta(final, baseline, "row_mean_action_obs_cosine"),
         "diagnostic_best_step": best.get("checkpoint_step", ""),
         "diagnostic_report_md_path": str(Path(path).with_name("checkpoint_diagnostics_report.md")),
+        **provenance,
         "diagnostic_success_failure_ce_gap": ""
         if success_ce is None or failure_ce is None
         else f"{failure_ce - success_ce:.10g}",
@@ -549,6 +560,27 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         if success_cosine is None or failure_cosine is None
         else f"{success_cosine - failure_cosine:.10g}",
         "status": "diagnosed",
+    }
+
+
+def diagnostic_provenance_fields(summary: dict[str, Any]) -> dict[str, Any]:
+    provenance = summary.get("provenance")
+    if not isinstance(provenance, dict):
+        return {}
+    checkpoints = provenance.get("checkpoints", [])
+    checkpoint_count = provenance.get("checkpoint_count", "")
+    if checkpoint_count == "" and isinstance(checkpoints, list):
+        checkpoint_count = len(checkpoints)
+    return {
+        "diagnostic_command": provenance.get("command", ""),
+        "diagnostic_model_path": provenance.get("model_path", ""),
+        "diagnostic_output_csv_path": provenance.get("output_csv", ""),
+        "diagnostic_checkpoint_count": checkpoint_count,
+        "diagnostic_max_length": provenance.get("max_length", ""),
+        "diagnostic_batch_size": provenance.get("batch_size", ""),
+        "diagnostic_max_rows": provenance.get("max_rows", ""),
+        "diagnostic_device": provenance.get("device", ""),
+        "diagnostic_dtype": provenance.get("dtype", ""),
     }
 
 
@@ -755,7 +787,15 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
             ("eval_checkpoint_path", "Eval checkpoint"),
             ("latest_checkpoint_path", "Latest checkpoint"),
             ("diagnostic_summary_path", "Diagnostic summary"),
+            ("diagnostic_output_csv_path", "Diagnostic CSV"),
             ("train_log_path", "Train log"),
+        ):
+            value = row.get(key, "")
+            if value:
+                lines.append(f"- {title}: `{value}`")
+        for key, title in (
+            ("diagnostic_model_path", "Diagnostic model"),
+            ("diagnostic_command", "Diagnostic command"),
         ):
             value = row.get(key, "")
             if value:

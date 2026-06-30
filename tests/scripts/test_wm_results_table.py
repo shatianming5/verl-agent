@@ -186,6 +186,17 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
                         "row_mean_action_obs_cosine": 0.35,
                     },
                 ],
+                "provenance": {
+                    "command": "python scripts/wm_score_transition_dump.py --model-path /model",
+                    "model_path": "/model",
+                    "output_csv": "/work/logs/world_model_diagnostics/wm_obs_ce_l0p01_s0/checkpoint_scores.csv",
+                    "checkpoint_count": 2,
+                    "max_length": 512,
+                    "batch_size": 4,
+                    "max_rows": 0,
+                    "device": "cuda:0",
+                    "dtype": "bfloat16",
+                },
                 "success_buckets": [
                     {
                         "checkpoint_label": "obs_step150",
@@ -217,6 +228,14 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     assert row["diagnostic_delta_action_obs_cosine"] == "0.25"
     assert row["diagnostic_success_failure_ce_gap"] == "0.7"
     assert row["diagnostic_success_failure_cosine_gap"] == "0.3"
+    assert row["diagnostic_command"].startswith("python scripts/wm_score_transition_dump.py")
+    assert row["diagnostic_model_path"] == "/model"
+    assert row["diagnostic_output_csv_path"].endswith("checkpoint_scores.csv")
+    assert row["diagnostic_checkpoint_count"] == 2
+    assert row["diagnostic_max_length"] == 512
+    assert row["diagnostic_batch_size"] == 4
+    assert row["diagnostic_device"] == "cuda:0"
+    assert row["diagnostic_dtype"] == "bfloat16"
 
 
 def test_expand_paths_expands_explicit_glob_paths(tmp_path):

@@ -22,6 +22,8 @@ import json
 import math
 import os
 import re
+import shlex
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -106,6 +108,35 @@ def parse_checkpoint_specs(specs: list[str]) -> list[CheckpointSpec]:
             raise ValueError(f"Invalid checkpoint spec: {spec!r}")
         parsed.append(CheckpointSpec(label=label, path=path))
     return parsed
+
+
+def build_provenance(args: argparse.Namespace, specs: list[CheckpointSpec]) -> dict[str, Any]:
+    return {
+        "argv": list(sys.argv),
+        "command": shlex.join(sys.argv),
+        "cwd": os.getcwd(),
+        "model_path": args.model_path,
+        "transition_jsonl": args.transition_jsonl,
+        "output_csv": args.output_csv,
+        "summary_json": args.summary_json,
+        "max_length": args.max_length,
+        "batch_size": args.batch_size,
+        "max_rows": args.max_rows,
+        "device": args.device,
+        "dtype": args.dtype,
+        "skip_entropy": bool(args.skip_entropy),
+        "chat_template_kwargs_json": args.chat_template_kwargs_json,
+        "chat_template_kwargs": args.chat_template_kwargs,
+        "checkpoint_count": len(specs),
+        "checkpoints": [
+            {
+                "label": spec.label,
+                "path": spec.path,
+                "step": checkpoint_step(spec.label, spec.path),
+            }
+            for spec in specs
+        ],
+    }
 
 
 def load_transitions(path: str, max_rows: int = 0) -> list[dict[str, Any]]:
@@ -619,6 +650,7 @@ def main() -> None:
     summary["transition_jsonl"] = args.transition_jsonl
     summary["max_length"] = args.max_length
     summary["rows"] = len(encoded)
+    summary["provenance"] = build_provenance(args, specs)
     parent = os.path.dirname(args.summary_json)
     if parent:
         os.makedirs(parent, exist_ok=True)

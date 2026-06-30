@@ -21,6 +21,22 @@ def _summary(path="/tmp/wm_diag/checkpoint_scores_summary.json"):
         "transition_jsonl": "/tmp/transitions.jsonl",
         "rows": 12,
         "max_length": 512,
+        "provenance": {
+            "command": "python scripts/wm_score_transition_dump.py --model-path /model",
+            "model_path": "/model",
+            "output_csv": "/tmp/wm_diag/checkpoint_scores.csv",
+            "checkpoint_count": 2,
+            "max_length": 512,
+            "batch_size": 4,
+            "max_rows": 0,
+            "device": "cuda:0",
+            "dtype": "bfloat16",
+            "skip_entropy": False,
+            "checkpoints": [
+                {"label": "run_init", "path": "base", "step": "init"},
+                {"label": "run_step60", "path": "/ckpt/global_step_60", "step": "60"},
+            ],
+        },
         "checkpoints": [
             {
                 "checkpoint_label": "run_step60",
@@ -91,6 +107,9 @@ def test_build_rows_sorts_checkpoints_and_computes_deltas():
     assert rows[1]["delta_row_mean_action_obs_cosine"] == 0.30000000000000004
     assert rows[1]["success_failure_ce_gap"] == 0.7999999999999998
     assert rows[1]["success_failure_cosine_gap"] == 0.5
+    assert rows[1]["diagnostic_command"].startswith("python scripts/wm_score_transition_dump.py")
+    assert rows[1]["diagnostic_model_path"] == "/model"
+    assert rows[1]["diagnostic_checkpoint_count"] == 2
 
 
 def test_render_markdown_includes_paths_and_comparison_table():
@@ -102,6 +121,9 @@ def test_render_markdown_includes_paths_and_comparison_table():
 
     assert "World-Model Checkpoint Diagnostics" in markdown
     assert "`/tmp/transitions.jsonl`" in markdown
+    assert "- Diagnostic command: `python scripts/wm_score_transition_dump.py --model-path /model`" in markdown
+    assert "- Model path: `/model`" in markdown
+    assert "- Scored checkpoints: `2` (run_init, run_step60)" in markdown
     assert "| run_init | init | 20 | 2.0000 | 0.0000 |" in markdown
     assert "| run_step60 | 60 | 20 | 1.5000 | -0.5000 |" in markdown
 
@@ -152,4 +174,6 @@ def test_main_writes_markdown_csv_and_svg(tmp_path, monkeypatch):
     with output_csv.open(encoding="utf-8") as handle:
         csv_rows = list(csv.DictReader(handle))
     assert csv_rows[0]["checkpoint_label"] == "run_init"
+    assert csv_rows[0]["diagnostic_model_path"] == "/model"
+    assert csv_rows[0]["diagnostic_dtype"] == "bfloat16"
     assert csv_rows[1]["delta_token_mean_ce"] == "-0.5"

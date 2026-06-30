@@ -103,6 +103,28 @@ def bucket_lookup(summary: dict[str, Any]) -> dict[tuple[str, bool], dict[str, A
     return buckets
 
 
+def diagnostic_provenance_fields(summary: dict[str, Any]) -> dict[str, Any]:
+    provenance = summary.get("provenance")
+    if not isinstance(provenance, dict):
+        return {}
+    checkpoints = provenance.get("checkpoints", [])
+    checkpoint_count = provenance.get("checkpoint_count", "")
+    if checkpoint_count == "" and isinstance(checkpoints, list):
+        checkpoint_count = len(checkpoints)
+    return {
+        "diagnostic_command": provenance.get("command", ""),
+        "diagnostic_model_path": provenance.get("model_path", ""),
+        "diagnostic_output_csv_path": provenance.get("output_csv", ""),
+        "diagnostic_checkpoint_count": checkpoint_count,
+        "diagnostic_max_length": provenance.get("max_length", ""),
+        "diagnostic_batch_size": provenance.get("batch_size", ""),
+        "diagnostic_max_rows": provenance.get("max_rows", ""),
+        "diagnostic_device": provenance.get("device", ""),
+        "diagnostic_dtype": provenance.get("dtype", ""),
+        "diagnostic_skip_entropy": provenance.get("skip_entropy", ""),
+    }
+
+
 def choose_baseline(checkpoints: list[dict[str, Any]], baseline_label: str | None) -> dict[str, Any]:
     if baseline_label:
         for checkpoint in checkpoints:
@@ -123,6 +145,7 @@ def build_rows(summary: dict[str, Any], baseline_label: str | None = None) -> li
     baseline = choose_baseline(checkpoints, baseline_label)
     buckets = bucket_lookup(summary)
     run_name = Path(str(summary.get("_summary_path", "summary"))).parent.name or "summary"
+    provenance_fields = diagnostic_provenance_fields(summary)
 
     rows = []
     for checkpoint in checkpoints:
@@ -145,6 +168,7 @@ def build_rows(summary: dict[str, Any], baseline_label: str | None = None) -> li
             "failure_token_mean_ce": failure_bucket.get("token_mean_ce", ""),
             "success_action_obs_cosine": success_bucket.get("row_mean_action_obs_cosine", ""),
             "failure_action_obs_cosine": failure_bucket.get("row_mean_action_obs_cosine", ""),
+            **provenance_fields,
         }
         add_delta(row, "token_mean_ce", baseline)
         add_delta(row, "row_mean_target_confidence", baseline)
@@ -182,6 +206,26 @@ def render_markdown(summaries: list[dict[str, Any]], rows_by_summary: list[list[
             lines.append(f"- Rows: `{summary['rows']}`")
         if summary.get("max_length") != "":
             lines.append(f"- Max length: `{summary['max_length']}`")
+        provenance = summary.get("provenance")
+        if isinstance(provenance, dict):
+            for key, title in (
+                ("command", "Diagnostic command"),
+                ("model_path", "Model path"),
+                ("output_csv", "Per-transition CSV"),
+                ("device", "Device"),
+                ("dtype", "Dtype"),
+                ("batch_size", "Batch size"),
+                ("max_rows", "Max rows"),
+            ):
+                value = provenance.get(key, "")
+                if value != "":
+                    lines.append(f"- {title}: `{value}`")
+            checkpoints = provenance.get("checkpoints", [])
+            if isinstance(checkpoints, list) and checkpoints:
+                checkpoint_labels = ", ".join(
+                    str(item.get("label") or item.get("path") or "") for item in checkpoints if isinstance(item, dict)
+                )
+                lines.append(f"- Scored checkpoints: `{len(checkpoints)}` ({checkpoint_labels})")
         lines.append("")
 
         columns = [

@@ -133,3 +133,38 @@ def test_load_transitions_and_summary_success_buckets(tmp_path):
     assert summary["checkpoints"][0]["target_tokens"] == 4
     assert summary["checkpoints"][0]["token_mean_ce"] == 2.5
     assert {bucket["episode_success"] for bucket in summary["success_buckets"]} == {True, False}
+
+
+def test_build_provenance_records_scoring_config(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(sys, "argv", ["wm_score_transition_dump.py", "--model-path", "/model"])
+    args = module.argparse.Namespace(
+        model_path="/model",
+        transition_jsonl="/work/transitions.jsonl",
+        output_csv="/work/scores.csv",
+        summary_json="/work/summary.json",
+        max_length=512,
+        batch_size=4,
+        max_rows=128,
+        device="cuda:0",
+        dtype="bfloat16",
+        skip_entropy=True,
+        chat_template_kwargs_json='{"enable_thinking": false}',
+        chat_template_kwargs={"enable_thinking": False},
+    )
+    specs = [
+        module.CheckpointSpec(label="init", path="base"),
+        module.CheckpointSpec(label="step150", path="/ckpt/global_step_150"),
+    ]
+
+    provenance = module.build_provenance(args, specs)
+
+    assert provenance["command"] == "wm_score_transition_dump.py --model-path /model"
+    assert provenance["model_path"] == "/model"
+    assert provenance["transition_jsonl"] == "/work/transitions.jsonl"
+    assert provenance["checkpoint_count"] == 2
+    assert provenance["checkpoints"][0] == {"label": "init", "path": "base", "step": "init"}
+    assert provenance["checkpoints"][1]["step"] == "150"
+    assert provenance["batch_size"] == 4
+    assert provenance["skip_entropy"] is True
+    assert provenance["chat_template_kwargs"] == {"enable_thinking": False}
