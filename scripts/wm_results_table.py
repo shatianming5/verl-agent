@@ -19,6 +19,7 @@ from typing import Any
 
 
 DEFAULT_WORK = "/mnt/cephfs_home_tianming.sha/grpo_alfworld"
+DEFAULT_EVAL_SCRIPT = "/root/grpo/eval10x_alfworld.sh"
 RUN_PREFIX_RE = re.compile(r"grpo_qwen2\.5_1\.5b_alfworld_(.+?)(?:_\d{8}_\d{6})?(?:\.log)?$")
 
 CSV_COLUMNS = [
@@ -106,7 +107,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--branch", default=None, help="Branch name to show in the report. Defaults to current git branch if available.")
     parser.add_argument("--eval-cuda", default="<free_2gpu_pair>", help="CUDA_VISIBLE_DEVICES value to use in generated eval commands.")
     parser.add_argument("--eval-n", default="10", help="N_EVALS value to use in generated eval commands.")
-    parser.add_argument("--eval-script", default="scripts/eval10x_alfworld.sh", help="Eval script path to use in generated eval commands.")
+    parser.add_argument(
+        "--eval-script",
+        default=DEFAULT_EVAL_SCRIPT,
+        help="Eval script path to use in generated eval commands.",
+    )
     parser.add_argument("--output-md", help="Markdown report path. Prints to stdout if no output path is provided.")
     parser.add_argument("--output-csv", help="Machine-readable table path.")
     return parser.parse_args()

@@ -285,6 +285,49 @@ def test_main_writes_markdown_and_csv(tmp_path, monkeypatch):
     assert rows[0]["train_step"] == "150"
 
 
+def test_main_uses_bootstrap_eval_script_default_for_ready_runs(tmp_path, monkeypatch):
+    module = _load_module()
+    log_path = tmp_path / "grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1_20260630_010203.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "RUN_ALFWORLD_OFFICIAL seed=1 tag=wmlat_l0p001_s1 cuda=4,5 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1",
+                "Training Progress: 150/150",
+                "val/success_rate:0.734",
+                "saved /work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_md = tmp_path / "report.md"
+    output_csv = tmp_path / "report.csv"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wm_results_table.py",
+            "--run-log",
+            str(log_path),
+            "--eval-cuda",
+            "6,7",
+            "--output-md",
+            str(output_md),
+            "--output-csv",
+            str(output_csv),
+        ],
+    )
+    module.main()
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "ready_for_eval" in markdown
+    assert "bash /root/grpo/eval10x_alfworld.sh" in markdown
+    with output_csv.open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["eval_readiness"] == "ready_for_eval"
+    assert rows[0]["eval_command"].endswith("bash /root/grpo/eval10x_alfworld.sh")
+
+
 def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     module = _load_module()
     work_root = tmp_path / "work"
