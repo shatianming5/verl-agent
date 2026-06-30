@@ -9,7 +9,7 @@
 ## Report Generation
 
 - Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`
-- Report revision: `59c020bd89ec13d120bd71165eca42237f2aec1f`
+- Report revision: `1f9fb95497f7c94b920541fe36139e999233849d`
 - Eval result inputs: `6`
 - Train log inputs: `49`
 - Diagnostic summary inputs: `4`
@@ -32,9 +32,9 @@
 - Exact commands/configs: `per-run launch lines and generated train/eval/diagnostic commands are listed in Artifact Paths`
 - Result table status: `6/11 tracked run(s) have eval results; eval readiness {'evaluated': 6, 'missing_training_log': 1, 'waiting_for_checkpoint': 4}`
 - Diagnostic paths status: `4/11 tracked run(s) have checkpoint diagnostics; diagnostic readiness {'diagnosed': 4, 'missing_training_log': 1, 'ready_for_diagnostic': 2, 'waiting_for_checkpoint': 4}`
-- Raw observation CE interpretation: `Raw observation CE: negative so far; mean eval 0.6714 vs baseline 0.7065, delta -0.0351.`
-- World-model feature interpretation: `Observation prediction features: success/failure separation is quantified; failure-success CE gap mean -0.0733 across 4 run(s) (2 positive, 2 negative); success-failure cosine gap mean -0.0166 across 4 run(s) (2 positive, 2 negative). Positive CE gap means failure trajectories have higher CE than success trajectories; positive cosine gap means success trajectories have higher action-observation cosine.`
-- Latent alignment interpretation: `Latent alignment: eval and diagnostic evidence are available; mean eval 0.6735 vs baseline 0.7065, delta -0.0330; CE delta mean -0.0064; cosine delta mean -0.0384 across 1 latent diagnostic run(s).`
+- Raw observation CE interpretation: `Raw observation CE: obs_ce lambda_obs=0.01 negative so far; mean eval 0.6714 vs baseline 0.7065, delta -0.0351 (complete evals 2/2); obs_ce lambda_obs=0.03 pending (complete evals 0/2); obs_ce lambda_obs=0.05 pending (complete evals 0/2). Baseline complete evals 3/3.`
+- World-model feature interpretation: `Observation prediction features: success/failure separation is quantified for 2/6 obs_ce run(s); failure-success CE gap mean +0.0014 across 2 run(s) (2 positive, 0 negative); success-failure cosine gap mean +0.0136 across 2 run(s) (2 positive, 0 negative). Positive CE gap means failure trajectories have higher CE than success trajectories; positive cosine gap means success trajectories have higher action-observation cosine.`
+- Latent alignment interpretation: `Latent alignment: partial eval and diagnostic evidence is available; mean eval 0.6735 vs baseline 0.7065, delta -0.0330; complete evals 1/2; CE delta mean -0.0064; cosine delta mean -0.0384 across 1 latent diagnostic run(s).`
 - Training log coverage: `10/11 tracked run(s) have training logs`
 
 | run | tag | objective | seed | lambda_obs | lambda_latent | eval mean +/- std | eval n | eval readiness | diag readiness | last online val | last WM metric | train step | ckpt backup | diag CE | delta CE | diag cosine | delta cosine | status |
@@ -44,7 +44,7 @@
 | grpo_baseline_s2 | official_s2 | grpo_baseline | 2 |  |  | 0.6922 +/- 0.0321 (n=10) | 10 | evaluated | ready_for_diagnostic | 0.7190 |  | 150 | missing_backup |  |  |  |  | evaluated;training_seen;training_complete |
 | obs_ce_l0p01_s0 | wm_obs_ce_l0p01_s0 | obs_ce | 0 | 0.01 |  | 0.7311 +/- 0.0244 (n=10) | 10 | evaluated | diagnosed | 0.7500 | obs_ce_loss=0.161 | 150 | missing_backup | CE 0.2732 | -1.1620 | 0.1509 | -0.0177 | evaluated;training_complete;diagnosed |
 | obs_ce_l0p01_s1 | wm_obs_ce_l0p01_s1 | obs_ce | 1 | 0.01 |  | 0.6118 +/- 0.0324 (n=10) | 10 | evaluated | diagnosed | 0.6410 | obs_ce_loss=0.147 | 150 | missing_backup | CE 0.2688 | -1.1601 | 0.1626 | -0.0495 | evaluated;training_complete;diagnosed |
-| obs_ce_l0p03_s0 | wm_obs_ce_l0p03_s0 | obs_ce | 0 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0620 | obs_ce_loss=0.559 | 6 | missing_backup |  |  |  |  | training_seen |
+| obs_ce_l0p03_s0 | wm_obs_ce_l0p03_s0 | obs_ce | 0 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0620 | obs_ce_loss=0.503 | 7 | missing_backup |  |  |  |  | training_seen |
 | obs_ce_l0p03_s1 | wm_obs_ce_l0p03_s1 | obs_ce | 1 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0860 | obs_ce_loss=0.825 | 4 | missing_backup |  |  |  |  | training_seen |
 | obs_ce_l0p05_s0 | wm_obs_ce_l0p05_s0 | obs_ce | 0 | 0.05 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0780 | obs_ce_loss=1.017 | 2 | missing_backup |  |  |  |  | training_seen |
 | obs_ce_l0p05_s1 | wm_obs_ce_l0p05_s1 | obs_ce | 1 | 0.05 |  |  |  | missing_training_log | missing_training_log |  |  |  | no_checkpoint |  |  |  |  |  |
