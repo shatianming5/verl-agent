@@ -114,6 +114,88 @@ def test_build_rows_sorts_checkpoints_and_computes_deltas():
     assert rows[1]["diagnostic_checkpoint_count"] == 2
 
 
+def test_load_summary_backfills_success_buckets_from_score_csv(tmp_path):
+    module = _load_module()
+    summary_path = tmp_path / "checkpoint_scores_summary.json"
+    score_csv = tmp_path / "checkpoint_scores.csv"
+    with score_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "checkpoint_label",
+                "checkpoint_step",
+                "target_tokens",
+                "nll_sum",
+                "target_confidence_mean",
+                "target_entropy_mean",
+                "action_obs_cosine",
+                "episode_rewards",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(
+            [
+                {
+                    "checkpoint_label": "run_init",
+                    "checkpoint_step": "init",
+                    "target_tokens": "10",
+                    "nll_sum": "18",
+                    "target_confidence_mean": "0.3",
+                    "target_entropy_mean": "1.7",
+                    "action_obs_cosine": "0.2",
+                    "episode_rewards": "1",
+                },
+                {
+                    "checkpoint_label": "run_init",
+                    "checkpoint_step": "init",
+                    "target_tokens": "10",
+                    "nll_sum": "24",
+                    "target_confidence_mean": "0.1",
+                    "target_entropy_mean": "2.2",
+                    "action_obs_cosine": "-0.1",
+                    "episode_rewards": "0",
+                },
+                {
+                    "checkpoint_label": "run_step60",
+                    "checkpoint_step": "60",
+                    "target_tokens": "10",
+                    "nll_sum": "11",
+                    "target_confidence_mean": "0.4",
+                    "target_entropy_mean": "1.4",
+                    "action_obs_cosine": "0.5",
+                    "episode_rewards": "1",
+                },
+                {
+                    "checkpoint_label": "run_step60",
+                    "checkpoint_step": "60",
+                    "target_tokens": "10",
+                    "nll_sum": "19",
+                    "target_confidence_mean": "0.2",
+                    "target_entropy_mean": "2.0",
+                    "action_obs_cosine": "0.0",
+                    "episode_rewards": "0",
+                },
+            ]
+        )
+    summary = _summary(path=str(summary_path))
+    summary.pop("_summary_path")
+    summary.pop("success_buckets")
+    summary["provenance"]["output_csv"] = str(score_csv)
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    loaded = module.load_summary(str(summary_path))
+    rows = module.build_rows(loaded)
+    markdown = module.render_markdown([loaded], [rows])
+
+    assert loaded["_success_buckets_source"] == str(score_csv)
+    assert len(loaded["success_buckets"]) == 4
+    assert rows[1]["success_token_mean_ce"] == 1.1
+    assert rows[1]["failure_token_mean_ce"] == 1.9
+    assert rows[1]["success_failure_ce_gap"] == 0.7999999999999998
+    assert rows[1]["success_failure_cosine_gap"] == 0.5
+    assert f"- Success/failure buckets: `backfilled from {score_csv}`" in markdown
+
+
 def test_render_markdown_includes_paths_and_comparison_table():
     module = _load_module()
     summary = _summary()

@@ -58,6 +58,10 @@ def load_summary(path: str) -> dict[str, Any]:
     if not summary["checkpoints"]:
         raise ValueError(f"{path} contains no checkpoint summaries")
     summary["_summary_path"] = path
+    if not summary.get("success_buckets"):
+        backfilled = backfill_success_buckets(summary)
+        if backfilled:
+            summary["success_buckets"] = backfilled
     return summary
 
 
@@ -74,6 +78,8 @@ def coerce_float(value: Any) -> float | None:
 def coerce_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
+    if value in (0, 1):
+        return bool(value)
     if isinstance(value, str):
         lowered = value.strip().lower()
         if lowered in {"true", "1", "yes"}:
@@ -81,6 +87,109 @@ def coerce_bool(value: Any) -> bool | None:
         if lowered in {"false", "0", "no"}:
             return False
     return None
+
+
+def coerce_int(value: Any) -> int | None:
+    number = coerce_float(value)
+    return None if number is None else int(number)
+
+
+def numeric_values(rows: list[dict[str, Any]], key: str) -> list[float]:
+    values = []
+    for row in rows:
+        value = coerce_float(row.get(key))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def infer_episode_success(row: dict[str, Any]) -> bool | None:
+    parsed = coerce_bool(row.get("episode_success"))
+    if parsed is not None:
+        return parsed
+    episode_reward = coerce_float(row.get("episode_rewards"))
+    if episode_reward is not None:
+        return episode_reward > 0.0
+    if coerce_bool(row.get("wm_done_after_action")) is True:
+        reward = coerce_float(row.get("rewards"))
+        if reward is not None:
+            return reward > 0.0
+    return None
+
+
+def score_csv_candidates(summary: dict[str, Any]) -> list[Path]:
+    summary_path = Path(str(summary.get("_summary_path", "")))
+    candidates = []
+    provenance = summary.get("provenance")
+    if isinstance(provenance, dict):
+        output_csv = provenance.get("output_csv")
+        if output_csv:
+            output_path = Path(str(output_csv))
+            candidates.append(output_path)
+            if not output_path.is_absolute() and summary_path.parent:
+                candidates.append(summary_path.parent / output_path)
+    if summary_path.name:
+        candidates.append(summary_path.with_name("checkpoint_scores.csv"))
+
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            unique_candidates.append(candidate)
+            seen.add(key)
+    return unique_candidates
+
+
+def summarize_bucket(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    token_rows = [row for row in rows if (coerce_int(row.get("target_tokens")) or 0) > 0]
+    total_tokens = sum(coerce_int(row.get("target_tokens")) or 0 for row in token_rows)
+    total_nll = sum(numeric_values(token_rows, "nll_sum"))
+    token_ce = total_nll / total_tokens if total_tokens else None
+    return {
+        "rows": len(rows),
+        "rows_with_targets": len(token_rows),
+        "target_tokens": total_tokens,
+        "token_mean_ce": "" if token_ce is None else token_ce,
+        "row_mean_target_confidence": mean(numeric_values(token_rows, "target_confidence_mean")),
+        "row_mean_target_entropy": mean(numeric_values(token_rows, "target_entropy_mean")),
+        "row_mean_action_obs_cosine": mean(numeric_values(rows, "action_obs_cosine")),
+    }
+
+
+def backfill_success_buckets(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    csv_path = next((path for path in score_csv_candidates(summary) if path.exists()), None)
+    if csv_path is None:
+        return []
+    with csv_path.open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    groups: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+    for row in rows:
+        label = str(row.get("checkpoint_label", ""))
+        success = infer_episode_success(row)
+        if label and success is not None:
+            groups.setdefault((label, success), []).append(row)
+
+    buckets = []
+    sorted_groups = sorted(groups.items(), key=lambda item: (checkpoint_sort_key(item[1][0]), item[0][1]))
+    for (label, success), group in sorted_groups:
+        bucket = summarize_bucket(group)
+        bucket.update(
+            {
+                "checkpoint_label": label,
+                "checkpoint_step": group[0].get("checkpoint_step", ""),
+                "episode_success": success,
+            }
+        )
+        buckets.append(bucket)
+    if buckets:
+        summary["_success_buckets_source"] = str(csv_path)
+    return buckets
 
 
 def checkpoint_sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
@@ -207,6 +316,8 @@ def render_markdown(summaries: list[dict[str, Any]], rows_by_summary: list[list[
             lines.append(f"- Rows: `{summary['rows']}`")
         if summary.get("max_length") != "":
             lines.append(f"- Max length: `{summary['max_length']}`")
+        if summary.get("_success_buckets_source"):
+            lines.append(f"- Success/failure buckets: `backfilled from {summary['_success_buckets_source']}`")
         provenance = summary.get("provenance")
         if isinstance(provenance, dict):
             for key, title in (
