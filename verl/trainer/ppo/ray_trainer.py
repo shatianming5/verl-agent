@@ -662,6 +662,96 @@ class RayPPOTrainer:
 
         print(f"Dumped generations to {filename}")
 
+    @staticmethod
+    def _json_safe(value):
+        if torch.is_tensor(value):
+            value = value.detach().cpu()
+            return value.item() if value.numel() == 1 else value.tolist()
+        if isinstance(value, np.ndarray):
+            return RayPPOTrainer._json_safe(value.tolist())
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, dict):
+            return {str(k): RayPPOTrainer._json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [RayPPOTrainer._json_safe(v) for v in value]
+        return value
+
+    @staticmethod
+    def _row_value(values, idx):
+        if torch.is_tensor(values):
+            return values[idx]
+        if isinstance(values, np.ndarray):
+            return values[idx]
+        if isinstance(values, (list, tuple)):
+            return values[idx]
+        return values
+
+    @staticmethod
+    def _infer_episode_success(row):
+        for key, value in row.items():
+            if "success_rate" in key:
+                try:
+                    return float(value) > 0.0
+                except (TypeError, ValueError):
+                    pass
+        try:
+            return float(row.get("episode_rewards", 0.0)) > 0.0
+        except (TypeError, ValueError):
+            return None
+
+    def _dump_world_model_transitions(self, batch, dump_path):
+        """Dump transition rows consumed by scripts/wm_score_transition_dump.py."""
+        non_tensor_batch = getattr(batch, "non_tensor_batch", {})
+        required_keys = ("wm_prev_obs_text", "wm_action_text", "wm_next_obs_text")
+        if any(key not in non_tensor_batch for key in required_keys):
+            return None
+
+        os.makedirs(dump_path, exist_ok=True)
+        filename = os.path.join(dump_path, f"{self.global_steps}.wm_transitions.jsonl")
+        n = len(non_tensor_batch[required_keys[0]])
+
+        scores = None
+        if hasattr(batch, "batch") and "token_level_scores" in batch.batch:
+            scores = batch.batch["token_level_scores"].sum(-1).detach().cpu().tolist()
+
+        metadata_keys = {
+            "uid",
+            "traj_uid",
+            "wm_step_idx",
+            "wm_done_after_action",
+            "active_masks",
+            "rewards",
+            "is_action_valid",
+            "episode_rewards",
+            "episode_lengths",
+            "tool_callings",
+        }
+
+        with open(filename, "w") as f:
+            for idx in range(n):
+                row = {
+                    "schema_version": "wm_transition_v1",
+                    "global_step": self.global_steps,
+                    "split": "train",
+                    "row_idx": idx,
+                    "wm_prev_obs_text": self._json_safe(self._row_value(non_tensor_batch["wm_prev_obs_text"], idx)),
+                    "wm_action_text": self._json_safe(self._row_value(non_tensor_batch["wm_action_text"], idx)),
+                    "wm_next_obs_text": self._json_safe(self._row_value(non_tensor_batch["wm_next_obs_text"], idx)),
+                }
+                if scores is not None:
+                    row["score"] = self._json_safe(scores[idx])
+                for key, values in non_tensor_batch.items():
+                    if key in metadata_keys or "success_rate" in key:
+                        row[key] = self._json_safe(self._row_value(values, idx))
+                episode_success = self._infer_episode_success(row)
+                if episode_success is not None:
+                    row["episode_success"] = episode_success
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+        print(f"Dumped world-model transitions to {filename}")
+        return filename
+
     def _maybe_log_val_generations(self, inputs, outputs, scores):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
@@ -1255,7 +1345,7 @@ class RayPPOTrainer:
                     rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
                     if rollout_data_dir:
                         with _timer("dump_rollout_generations", timing_raw):
-                            print(batch.batch.keys())
+                            self._dump_world_model_transitions(batch=batch, dump_path=rollout_data_dir)
                             inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
                             scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()

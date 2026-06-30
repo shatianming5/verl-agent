@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 
@@ -27,6 +28,7 @@ def _load_module():
     module_path = repo_root / "scripts" / "wm_score_transition_dump.py"
     spec = importlib.util.spec_from_file_location("wm_score_transition_dump_under_test", module_path)
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
