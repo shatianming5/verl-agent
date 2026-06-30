@@ -628,6 +628,108 @@ def success_bucket(summary: dict[str, Any], label: str, success: bool) -> dict[s
     return {}
 
 
+def diagnostic_numeric_values(rows: list[dict[str, Any]], key: str) -> list[float]:
+    values = []
+    for row in rows:
+        value = coerce_float(row.get(key))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def diagnostic_mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def diagnostic_target_tokens(row: dict[str, Any]) -> int:
+    tokens = coerce_int(row.get("target_tokens"))
+    if tokens is not None:
+        return tokens
+    token_float = coerce_float(row.get("target_tokens"))
+    return int(token_float) if token_float is not None else 0
+
+
+def infer_diagnostic_episode_success(row: dict[str, Any]) -> bool | None:
+    parsed = coerce_bool(row.get("episode_success"))
+    if parsed is not None:
+        return parsed
+    episode_reward = coerce_float(row.get("episode_rewards"))
+    if episode_reward is not None:
+        return episode_reward > 0.0
+    if coerce_bool(row.get("wm_done_after_action")) is True:
+        reward = coerce_float(row.get("rewards"))
+        if reward is not None:
+            return reward > 0.0
+    return None
+
+
+def diagnostic_score_csv_candidates(summary: dict[str, Any], summary_path: Path) -> list[Path]:
+    candidates = []
+    provenance = summary.get("provenance")
+    if isinstance(provenance, dict):
+        output_csv = provenance.get("output_csv")
+        if output_csv:
+            output_path = Path(str(output_csv))
+            candidates.append(output_path)
+            if not output_path.is_absolute():
+                candidates.append(summary_path.parent / output_path)
+    candidates.append(summary_path.with_name("checkpoint_scores.csv"))
+
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            unique_candidates.append(candidate)
+            seen.add(key)
+    return unique_candidates
+
+
+def summarize_diagnostic_bucket(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    token_rows = [row for row in rows if diagnostic_target_tokens(row) > 0]
+    total_tokens = sum(diagnostic_target_tokens(row) for row in token_rows)
+    total_nll = sum(diagnostic_numeric_values(token_rows, "nll_sum"))
+    token_ce = total_nll / total_tokens if total_tokens else None
+    return {
+        "rows": len(rows),
+        "rows_with_targets": len(token_rows),
+        "target_tokens": total_tokens,
+        "token_mean_ce": "" if token_ce is None else token_ce,
+        "row_mean_target_confidence": diagnostic_mean(diagnostic_numeric_values(token_rows, "target_confidence_mean")),
+        "row_mean_target_entropy": diagnostic_mean(diagnostic_numeric_values(token_rows, "target_entropy_mean")),
+        "row_mean_action_obs_cosine": diagnostic_mean(diagnostic_numeric_values(rows, "action_obs_cosine")),
+    }
+
+
+def backfill_diagnostic_success_buckets(summary: dict[str, Any], summary_path: Path) -> list[dict[str, Any]]:
+    csv_path = next((path for path in diagnostic_score_csv_candidates(summary, summary_path) if path.exists()), None)
+    if csv_path is None:
+        return []
+    with csv_path.open(encoding="utf-8") as handle:
+        score_rows = list(csv.DictReader(handle))
+
+    groups: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+    for score_row in score_rows:
+        label = str(score_row.get("checkpoint_label", ""))
+        success = infer_diagnostic_episode_success(score_row)
+        if label and success is not None:
+            groups.setdefault((label, success), []).append(score_row)
+
+    buckets = []
+    sorted_groups = sorted(groups.items(), key=lambda item: (checkpoint_sort_key(item[1][0]), item[0][1]))
+    for (label, success), group in sorted_groups:
+        bucket = summarize_diagnostic_bucket(group)
+        bucket.update(
+            {
+                "checkpoint_label": label,
+                "checkpoint_step": group[0].get("checkpoint_step", ""),
+                "episode_success": success,
+            }
+        )
+        buckets.append(bucket)
+    return buckets
+
+
 def checkpoint_root_from_checkpoint_path(path: Any) -> str:
     checkpoint_path = str(path or "").strip()
     if not checkpoint_path or checkpoint_path.lower() in {"base", "init", "none"}:
@@ -685,6 +787,11 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
     checkpoints = summary.get("checkpoints", [])
     if not isinstance(checkpoints, list) or not checkpoints:
         raise ValueError(f"{path} does not contain checkpoint summaries")
+    summary_path = Path(path)
+    if not summary.get("success_buckets"):
+        backfilled = backfill_diagnostic_success_buckets(summary, summary_path)
+        if backfilled:
+            summary["success_buckets"] = backfilled
 
     fragment = run_fragment_from_path(path)
     transition_path = str(summary.get("transition_jsonl", ""))
@@ -703,7 +810,6 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
     failure_cosine = coerce_float(failure.get("row_mean_action_obs_cosine"))
     provenance = diagnostic_provenance_fields(summary)
 
-    summary_path = Path(path)
     report_paths = diagnostic_report_paths(summary_path)
     row = {
         **meta,

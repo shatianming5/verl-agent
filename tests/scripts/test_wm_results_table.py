@@ -1080,6 +1080,76 @@ def test_parse_diagnostic_summary_coerces_string_success_buckets(tmp_path):
     assert row["diagnostic_success_failure_cosine_gap"] == "0.3"
 
 
+def test_parse_diagnostic_summary_backfills_success_buckets_from_score_csv(tmp_path):
+    module = _load_module()
+    summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
+    summary_dir.mkdir()
+    score_csv = summary_dir / "checkpoint_scores.csv"
+    with score_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "checkpoint_label",
+                "checkpoint_step",
+                "target_tokens",
+                "nll_sum",
+                "action_obs_cosine",
+                "episode_rewards",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(
+            [
+                {
+                    "checkpoint_label": "step150",
+                    "checkpoint_step": "150",
+                    "target_tokens": "10",
+                    "nll_sum": "11",
+                    "action_obs_cosine": "0.5",
+                    "episode_rewards": "1",
+                },
+                {
+                    "checkpoint_label": "step150",
+                    "checkpoint_step": "150",
+                    "target_tokens": "10",
+                    "nll_sum": "19",
+                    "action_obs_cosine": "0.0",
+                    "episode_rewards": "0",
+                },
+            ]
+        )
+    summary_path = summary_dir / "checkpoint_scores_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "checkpoints": [
+                    {
+                        "checkpoint_label": "init",
+                        "checkpoint_step": "init",
+                        "token_mean_ce": 2.0,
+                        "row_mean_action_obs_cosine": 0.10,
+                    },
+                    {
+                        "checkpoint_label": "step150",
+                        "checkpoint_step": "150",
+                        "token_mean_ce": 1.5,
+                        "row_mean_action_obs_cosine": 0.35,
+                    },
+                ],
+                "provenance": {
+                    "output_csv": str(score_csv),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    row = module.parse_diagnostic_summary(str(summary_path))
+
+    assert row["diagnostic_success_failure_ce_gap"] == "0.8"
+    assert row["diagnostic_success_failure_cosine_gap"] == "0.5"
+
+
 def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path):
     module = _load_module()
     summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"
