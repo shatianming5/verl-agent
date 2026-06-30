@@ -9,7 +9,7 @@
 ## Report Generation
 
 - Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`
-- Report revision: `64a4ccbfa722514cbbb10eec151b246d920cc852`
+- Report revision: `59c020bd89ec13d120bd71165eca42237f2aec1f`
 - Eval result inputs: `6`
 - Train log inputs: `49`
 - Diagnostic summary inputs: `4`
@@ -20,6 +20,7 @@
 - Eval CUDA: `<free_2gpu_pair>`
 - Eval n: `10`
 - Eval script: `/root/grpo/eval10x_alfworld.sh`
+- Diagnostic CUDA: `<free_2gpu_pair>`
 - Diagnostic script: `/root/grpo/run_wm_checkpoint_diagnostics.sh`
 - Diagnostic steps: `init 30 60 90 120 150`
 - Diagnostic transition step: `150`
@@ -45,11 +46,11 @@
 | obs_ce_l0p01_s1 | wm_obs_ce_l0p01_s1 | obs_ce | 1 | 0.01 |  | 0.6118 +/- 0.0324 (n=10) | 10 | evaluated | diagnosed | 0.6410 | obs_ce_loss=0.147 | 150 | missing_backup | CE 0.2688 | -1.1601 | 0.1626 | -0.0495 | evaluated;training_complete;diagnosed |
 | obs_ce_l0p03_s0 | wm_obs_ce_l0p03_s0 | obs_ce | 0 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0620 | obs_ce_loss=0.559 | 6 | missing_backup |  |  |  |  | training_seen |
 | obs_ce_l0p03_s1 | wm_obs_ce_l0p03_s1 | obs_ce | 1 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0860 | obs_ce_loss=0.825 | 4 | missing_backup |  |  |  |  | training_seen |
-| obs_ce_l0p05_s0 | wm_obs_ce_l0p05_s0 | obs_ce | 0 | 0.05 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0780 | obs_ce_loss=1.211 | 1 | missing_backup |  |  |  |  | training_seen |
+| obs_ce_l0p05_s0 | wm_obs_ce_l0p05_s0 | obs_ce | 0 | 0.05 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0780 | obs_ce_loss=1.017 | 2 | missing_backup |  |  |  |  | training_seen |
 | obs_ce_l0p05_s1 | wm_obs_ce_l0p05_s1 | obs_ce | 1 | 0.05 |  |  |  | missing_training_log | missing_training_log |  |  |  | no_checkpoint |  |  |  |  |  |
 | latent_s0 | wmls_l1 | latent | 0 |  |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint |  | latent_loss=1.007, cosine=-0.007 | 1 | no_checkpoint |  |  |  |  | training_complete |
 | latent_l0p001_s0 | wmlat_l0p001_s0 | latent | 0 |  | 0.001 | 0.6735 +/- 0.0267 (n=10) | 10 | evaluated | diagnosed | 0.7270 | latent_loss=0.317, cosine=0.683 | 150 | missing_backup | CE 1.4187 | -0.0064 | 0.1378 | -0.0384 | evaluated;training_complete;diagnosed |
-| latent_l0p001_s1 | wmlat_l0p001_s1 | latent | 1 |  | 0.001 |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.6950 | latent_loss=0.364, cosine=0.636 | 98 | missing_backup |  |  |  |  | training_seen |
+| latent_l0p001_s1 | wmlat_l0p001_s1 | latent | 1 |  | 0.001 |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.6950 | latent_loss=0.380, cosine=0.620 | 99 | missing_backup |  |  |  |  | training_seen |
 
 ## Result Summary
 
@@ -84,8 +85,8 @@
 
 ## Diagnostic Commands
 
-- `grpo_baseline_s1` transitions `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl` checkpoint root `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7`: `TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7 TAG=official_6to7 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
-- `grpo_baseline_s2` transitions `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl` checkpoint root `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2`: `TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2 TAG=official_s2 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
+- `grpo_baseline_s1` transitions `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl` checkpoint root `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7`: `CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7 TAG=official_6to7 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
+- `grpo_baseline_s2` transitions `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl` checkpoint root `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2`: `CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2 TAG=official_s2 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
 
 ## Expected Run Coverage
 
@@ -130,7 +131,7 @@
 - Diagnostic transitions: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl`
 - Diagnostic checkpoint root: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7`
 - Train log: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_gpudev_2gpu_4to5_20260625_090345.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_gpudev_2gpu_4to5_20260625_102928.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_gpudev_h200x4_4to7_maxmem_20260625_045101.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_gpudev_h200x4_4to7_maxmem_20260625_045642.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_gpudev_h200x4_4to7_maxmem_20260625_050052.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_gpudev_h200x4_4to7_maxmem_20260625_050848.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_h200x4_gpus4_7_20260623_081252.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_h200x4_gpus4_7_20260623_082634.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_h200x4_gpus4_7_20260623_112835.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_h200x8_20260623_074616.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7_20260626_225927.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7_20260626_234042.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7_20260626_234950.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7_20260627_004042.log`
-- Diagnostic command: `TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7 TAG=official_6to7 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
+- Diagnostic command: `CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7 TAG=official_6to7 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
 - Launch line: `RUN_SEED_GPUDEV_MAXMEM seed=1 cuda_visible_devices=4,5,6,7 n_gpus=4 exp=grpo_qwen2.5_1.5b_alfworld_seed1_gpudev_h200x4_4to7_maxmem`
 - Eval line: `EVAL10X_START label=seed1 ckpt=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_official_6to7/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=6,7 Sun Jun 28 08:46:08 UTC 2026`
 - Train command: `TAG=official_6to7 WM_DUMP_ROLLOUTS=1 CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' bash /root/grpo/run_seed_alfworld_official.sh 1`
@@ -144,7 +145,7 @@
 - Diagnostic transitions: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl`
 - Diagnostic checkpoint root: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2`
 - Train log: `/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed2_gpudev_2gpu_6to7_20260625_090648.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed2_gpudev_2gpu_6to7_20260625_103118.log;/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2_20260628_055217.log`
-- Diagnostic command: `TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2 TAG=official_s2 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
+- Diagnostic command: `CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' TRANSITIONS_JSONL=/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl CKPT_ROOT=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2 TAG=official_s2 STEPS='init 30 60 90 120 150' bash /root/grpo/run_wm_checkpoint_diagnostics.sh`
 - Eval line: `EVAL10X_START label=seed2 ckpt=/mnt/cephfs_home_tianming.sha/grpo_alfworld/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed2_official_s2/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=4,5 Mon Jun 29 12:11:34 UTC 2026`
 - Train command: `TAG=official_s2 WM_DUMP_ROLLOUTS=1 CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' bash /root/grpo/run_seed_alfworld_official.sh 2`
 
