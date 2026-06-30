@@ -212,6 +212,77 @@ def test_objective_coverage_summarizes_eval_and_diagnostics():
     assert "| latent | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 1 |" in markdown
 
 
+def test_expected_run_coverage_reports_missing_artifacts():
+    module = _load_module()
+
+    rows = module.build_records(
+        eval_paths=[],
+        train_logs=[],
+        diagnostic_paths=[],
+        expected_runs=["obs_ce_l0p01_s0:objective=obs_ce,seed=0,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s0"],
+    )
+    module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_artifact_coverage(rows)
+
+    assert len(rows) == 1
+    assert rows[0]["run_key"] == "obs_ce_l0p01_s0"
+    assert rows[0]["expected"] == "yes"
+    assert rows[0]["eval_readiness"] == "missing_training_log"
+    assert rows[0]["has_train_log"] == "no"
+    assert rows[0]["has_eval"] == "no"
+    assert rows[0]["has_diagnostic"] == "no"
+    assert rows[0]["missing_artifacts"] == "train_log,eval,diagnostic"
+    assert rows[0]["final_report_readiness"] == "missing:train_log,eval,diagnostic"
+
+    markdown = module.render_markdown(rows)
+    assert "## Expected Run Coverage" in markdown
+    assert "| obs_ce_l0p01_s0 | obs_ce | 0 | no | no | no | missing_training_log | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |" in markdown
+
+
+def test_expected_run_merges_with_existing_artifacts(tmp_path):
+    module = _load_module()
+    log_path = tmp_path / "grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1_20260630_010203.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "RUN_ALFWORLD_OFFICIAL seed=1 tag=wmlat_l0p001_s1 cuda=4,5 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1",
+                "Training Progress: 150/150",
+                "saved /work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eval_path = tmp_path / "eval10x_wmlat_l0p001_s1_results.txt"
+    eval_path.write_text(
+        "\n".join(
+            [
+                "EVAL10X_START label=wmlat_l0p001_s1 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=4,5 Tue",
+                "EVAL10X_RESULT n=10 mean=0.7500 std=0.0200",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    rows = module.build_records(
+        eval_paths=[str(eval_path)],
+        train_logs=[str(log_path)],
+        diagnostic_paths=[],
+        expected_runs=["latent_l0p001_s1"],
+    )
+    module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_artifact_coverage(rows)
+
+    assert len(rows) == 1
+    assert rows[0]["expected"] == "yes"
+    assert rows[0]["run_key"] == "latent_l0p001_s1"
+    assert rows[0]["eval_readiness"] == "evaluated"
+    assert rows[0]["has_train_log"] == "yes"
+    assert rows[0]["has_eval"] == "yes"
+    assert rows[0]["has_diagnostic"] == "no"
+    assert rows[0]["missing_artifacts"] == "diagnostic"
+    assert rows[0]["final_report_readiness"] == "missing:diagnostic"
+
+
 def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     module = _load_module()
     summary_dir = tmp_path / "wm_obs_ce_l0p01_s0"

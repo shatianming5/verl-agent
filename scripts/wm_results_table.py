@@ -74,6 +74,12 @@ CSV_COLUMNS = [
     "launch_line",
     "command_summary",
     "eval_start_line",
+    "expected",
+    "has_train_log",
+    "has_eval",
+    "has_diagnostic",
+    "missing_artifacts",
+    "final_report_readiness",
     "status",
 ]
 
@@ -121,6 +127,15 @@ def parse_args() -> argparse.Namespace:
         "--eval-script",
         default=DEFAULT_EVAL_SCRIPT,
         help="Eval script path to use in generated eval commands.",
+    )
+    parser.add_argument(
+        "--expected-run",
+        action="append",
+        default=[],
+        help=(
+            "Expected run to include in coverage, even if no artifacts are found. "
+            "Format: run_key or run_key:key=value,key=value."
+        ),
     )
     parser.add_argument("--output-md", help="Markdown report path. Prints to stdout if no output path is provided.")
     parser.add_argument("--output-csv", help="Machine-readable table path.")
@@ -395,6 +410,23 @@ def parse_key_values(line: str) -> dict[str, str]:
     return result
 
 
+def parse_expected_run_spec(spec: str) -> dict[str, Any]:
+    run_key, _, metadata_text = spec.partition(":")
+    run_key = run_key.strip()
+    if not run_key:
+        raise ValueError(f"Invalid expected run spec: {spec!r}")
+    row: dict[str, Any] = {**infer_metadata(run_key), "run_key": run_key, "expected": "yes"}
+    if metadata_text:
+        for item in metadata_text.split(","):
+            if not item.strip():
+                continue
+            key, separator, value = item.partition("=")
+            if not separator:
+                raise ValueError(f"Invalid expected run metadata item {item!r} in {spec!r}")
+            row[key.strip()] = value.strip()
+    return row
+
+
 def parse_train_log(path: str) -> dict[str, Any]:
     text = read_text(path)
     fragment = run_fragment_from_path(path)
@@ -633,8 +665,15 @@ def objective_sort_key(row: dict[str, Any]) -> tuple[int, float, int, str]:
     return (order.get(objective, 8), lambda_value, seed, str(row.get("run_key", "")))
 
 
-def build_records(eval_paths: list[str], train_logs: list[str], diagnostic_paths: list[str]) -> list[dict[str, Any]]:
+def build_records(
+    eval_paths: list[str],
+    train_logs: list[str],
+    diagnostic_paths: list[str],
+    expected_runs: list[str] | None = None,
+) -> list[dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
+    for spec in expected_runs or []:
+        merge_record(records, parse_expected_run_spec(spec))
     for path in eval_paths:
         merge_record(records, parse_eval_result(path))
     for path in train_logs:
@@ -685,6 +724,28 @@ def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: 
         else:
             row["eval_readiness"] = "missing_training_log"
             row["eval_command"] = ""
+
+
+def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        has_train = bool(row.get("train_log_path"))
+        has_eval = bool(row.get("eval_result_path") or coerce_float(row.get("eval_mean")) is not None)
+        has_diagnostic = bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+        row["has_train_log"] = "yes" if has_train else "no"
+        row["has_eval"] = "yes" if has_eval else "no"
+        row["has_diagnostic"] = "yes" if has_diagnostic else "no"
+        missing = []
+        if not has_train:
+            missing.append("train_log")
+        if not has_eval:
+            missing.append("eval")
+        if not has_diagnostic:
+            missing.append("diagnostic")
+        row["missing_artifacts"] = ",".join(missing)
+        if row.get("expected") == "yes":
+            row["final_report_readiness"] = "complete" if not missing else f"missing:{row['missing_artifacts']}"
+        else:
+            row["final_report_readiness"] = "observed"
 
 
 def git_branch() -> str:
@@ -835,6 +896,27 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
                 lines.append(f"- `{row.get('run_key', '')}` checkpoint `{target}`: `{row['eval_command']}`")
         lines.append("")
 
+    expected_rows = [row for row in rows if row.get("expected") == "yes"]
+    if expected_rows:
+        lines.append("## Expected Run Coverage")
+        lines.append("")
+        expected_columns = [
+            ("run_key", "run"),
+            ("objective", "objective"),
+            ("seed", "seed"),
+            ("has_train_log", "train log"),
+            ("has_eval", "eval"),
+            ("has_diagnostic", "diagnostic"),
+            ("eval_readiness", "eval readiness"),
+            ("missing_artifacts", "missing artifacts"),
+            ("final_report_readiness", "final readiness"),
+        ]
+        lines.append("| " + " | ".join(title for _, title in expected_columns) + " |")
+        lines.append("| " + " | ".join("---" for _ in expected_columns) + " |")
+        for row in expected_rows:
+            lines.append("| " + " | ".join(str(row.get(key, "")) for key, _ in expected_columns) + " |")
+        lines.append("")
+
     lines.append("## Artifact Paths")
     lines.append("")
     for row in rows:
@@ -905,8 +987,9 @@ def main() -> None:
     eval_paths = expand_paths(args.eval_result, args.eval_glob)
     train_logs = expand_paths(args.train_log, args.train_log_glob)
     diagnostic_paths = expand_paths(args.diagnostic_summary, args.diagnostic_glob)
-    rows = build_records(eval_paths, train_logs, diagnostic_paths)
+    rows = build_records(eval_paths, train_logs, diagnostic_paths, expected_runs=args.expected_run)
     annotate_eval_readiness(rows, eval_cuda=args.eval_cuda, eval_n=args.eval_n, eval_script=args.eval_script)
+    annotate_artifact_coverage(rows)
     branch = args.branch if args.branch is not None else git_branch()
     markdown = render_markdown(rows, branch=branch, work_root=args.work_root)
 
