@@ -13,6 +13,7 @@ QUEUE_LOG=${QUEUE_LOG:-$LOG_DIR/world_model_queue_${STAMP}.log}
 CANDIDATE_PAIRS=(${CANDIDATE_PAIRS:-"0,1 2,3 4,5 6,7"})
 SLEEP_SECONDS=${SLEEP_SECONDS:-60}
 MAX_GPU_MEM_MIB=${MAX_GPU_MEM_MIB:-500}
+ALLOW_ASSIGNED_PAIRS=${ALLOW_ASSIGNED_PAIRS:-0}
 
 JOBS=(
   "latent_l0p001_s1|wmlat_l0p001_s1|latent|1|0.001"
@@ -77,7 +78,7 @@ pair_is_safe() {
   (( left_mem < MAX_GPU_MEM_MIB && right_mem < MAX_GPU_MEM_MIB )) || return 1
   ! gpu_has_pmon_compute "$left" || return 1
   ! gpu_has_pmon_compute "$right" || return 1
-  ! pair_has_known_assignment "$pair" || return 1
+  [[ "$ALLOW_ASSIGNED_PAIRS" == "1" ]] || ! pair_has_known_assignment "$pair" || return 1
 }
 
 first_safe_pair() {
@@ -127,7 +128,7 @@ launch_job() {
 
 main() {
   local launched=0
-  log "QUEUE_START jobs=${#JOBS[@]} candidate_pairs=${CANDIDATE_PAIRS[*]} max_gpu_mem_mib=$MAX_GPU_MEM_MIB"
+  log "QUEUE_START jobs=${#JOBS[@]} candidate_pairs=${CANDIDATE_PAIRS[*]} max_gpu_mem_mib=$MAX_GPU_MEM_MIB allow_assigned_pairs=$ALLOW_ASSIGNED_PAIRS"
 
   local spec job_id tag kind seed value pair
   for spec in "${JOBS[@]}"; do
