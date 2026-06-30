@@ -20,6 +20,7 @@ from typing import Any
 
 DEFAULT_WORK = "/mnt/cephfs_home_tianming.sha/grpo_alfworld"
 DEFAULT_EVAL_SCRIPT = "/root/grpo/eval10x_alfworld.sh"
+DEFAULT_TRAIN_SCRIPT = "/root/grpo/run_seed_alfworld_official.sh"
 RUN_PREFIX_RE = re.compile(r"grpo_qwen2\.5_1\.5b_alfworld_(.+?)(?:_\d{8}_\d{6})?(?:\.log)?$")
 GOAL_RD_EXPECTED_RUNS = [
     "grpo_baseline_s0:objective=grpo_baseline,seed=0,tag=official_4to5",
@@ -43,6 +44,7 @@ CSV_COLUMNS = [
     "seed",
     "lambda_obs",
     "lambda_latent",
+    "train_command",
     "eval_mean",
     "eval_std",
     "eval_n",
@@ -134,6 +136,12 @@ def parse_args() -> argparse.Namespace:
         help="Auto-discover standard artifacts under --work-root/logs and add them to explicit inputs.",
     )
     parser.add_argument("--branch", default=None, help="Branch name to show in the report. Defaults to current git branch if available.")
+    parser.add_argument("--train-cuda", default="<free_2gpu_pair>", help="CUDA_VISIBLE_DEVICES value to use in generated train commands.")
+    parser.add_argument(
+        "--train-script",
+        default=DEFAULT_TRAIN_SCRIPT,
+        help="Training script path to use in generated train commands.",
+    )
     parser.add_argument("--eval-cuda", default="<free_2gpu_pair>", help="CUDA_VISIBLE_DEVICES value to use in generated eval commands.")
     parser.add_argument("--eval-n", default="10", help="N_EVALS value to use in generated eval commands.")
     parser.add_argument(
@@ -716,6 +724,32 @@ def build_eval_command(row: dict[str, Any], eval_cuda: str, eval_n: str, eval_sc
     return f"{prefix} bash {shlex.quote(eval_script)}"
 
 
+def build_train_command(row: dict[str, Any], train_cuda: str, train_script: str) -> str:
+    seed = str(row.get("seed") or "").strip()
+    tag = str(row.get("tag") or row.get("run_key") or "").strip()
+    if not seed or not tag:
+        return ""
+
+    assignments = {"TAG": tag}
+    objective = str(row.get("objective") or "")
+    if objective == "obs_ce" and row.get("lambda_obs") not in ("", None):
+        assignments["LAMBDA_OBS"] = str(row["lambda_obs"])
+    if objective == "latent" and row.get("lambda_latent") not in ("", None):
+        assignments["LAMBDA_LATENT"] = str(row["lambda_latent"])
+    cuda = str(row.get("train_cuda") or train_cuda or "").strip()
+    if cuda:
+        assignments["CUDA_VISIBLE_DEVICES"] = cuda
+    prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in assignments.items())
+    return f"{prefix} bash {shlex.quote(train_script)} {shlex.quote(seed)}"
+
+
+def annotate_train_commands(rows: list[dict[str, Any]], train_cuda: str, train_script: str) -> None:
+    for row in rows:
+        if row.get("train_command"):
+            continue
+        row["train_command"] = build_train_command(row, train_cuda=train_cuda, train_script=train_script)
+
+
 def annotate_eval_readiness(rows: list[dict[str, Any]], eval_cuda: str, eval_n: str, eval_script: str) -> None:
     for row in rows:
         row["eval_target_checkpoint_path"] = ""
@@ -968,6 +1002,8 @@ def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str
             lines.append(f"- Eval line: `{row['eval_start_line']}`")
         if row.get("eval_command"):
             lines.append(f"- Eval command: `{row['eval_command']}`")
+        if row.get("train_command"):
+            lines.append(f"- Train command: `{row['train_command']}`")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1009,6 +1045,7 @@ def main() -> None:
     if args.expected_goal_rd_runs:
         expected_runs.extend(GOAL_RD_EXPECTED_RUNS)
     rows = build_records(eval_paths, train_logs, diagnostic_paths, expected_runs=expected_runs)
+    annotate_train_commands(rows, train_cuda=args.train_cuda, train_script=args.train_script)
     annotate_eval_readiness(rows, eval_cuda=args.eval_cuda, eval_n=args.eval_n, eval_script=args.eval_script)
     annotate_artifact_coverage(rows)
     branch = args.branch if args.branch is not None else git_branch()

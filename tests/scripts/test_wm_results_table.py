@@ -161,6 +161,45 @@ def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
     assert "CKPT=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150" in markdown
 
 
+def test_annotate_train_commands_generates_standard_goal_rd_commands():
+    module = _load_module()
+    rows = [
+        {
+            "run_key": "grpo_baseline_s0",
+            "objective": "grpo_baseline",
+            "tag": "official_4to5",
+            "seed": "0",
+        },
+        {
+            "run_key": "obs_ce_l0p03_s1",
+            "objective": "obs_ce",
+            "tag": "wm_obs_ce_l0p03_s1",
+            "seed": "1",
+            "lambda_obs": "0.03",
+        },
+        {
+            "run_key": "latent_l0p001_s1",
+            "objective": "latent",
+            "tag": "wmlat_l0p001_s1",
+            "seed": "1",
+            "lambda_latent": "0.001",
+            "train_cuda": "4,5",
+        },
+    ]
+
+    module.annotate_train_commands(rows, train_cuda="6,7", train_script="/root/grpo/run_seed_alfworld_official.sh")
+
+    assert rows[0]["train_command"] == "TAG=official_4to5 CUDA_VISIBLE_DEVICES=6,7 bash /root/grpo/run_seed_alfworld_official.sh 0"
+    assert rows[1]["train_command"] == (
+        "TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
+        "bash /root/grpo/run_seed_alfworld_official.sh 1"
+    )
+    assert rows[2]["train_command"] == (
+        "TAG=wmlat_l0p001_s1 LAMBDA_LATENT=0.001 CUDA_VISIBLE_DEVICES=4,5 "
+        "bash /root/grpo/run_seed_alfworld_official.sh 1"
+    )
+
+
 def test_objective_coverage_summarizes_eval_and_diagnostics():
     module = _load_module()
     rows = [
@@ -362,6 +401,8 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
             "--train-log",
             str(log_path),
             "--expected-goal-rd-runs",
+            "--train-cuda",
+            "6,7",
             "--output-md",
             str(output_md),
             "--output-csv",
@@ -383,6 +424,10 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
     assert by_key["obs_ce_l0p01_s0"]["has_eval"] == "yes"
     assert by_key["obs_ce_l0p01_s0"]["final_report_readiness"] == "missing:diagnostic"
     assert by_key["obs_ce_l0p03_s1"]["final_report_readiness"] == "missing:train_log,eval,diagnostic"
+    assert by_key["obs_ce_l0p03_s1"]["train_command"] == (
+        "TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
+        "bash /root/grpo/run_seed_alfworld_official.sh 1"
+    )
 
 
 def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
