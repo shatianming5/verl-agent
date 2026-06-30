@@ -412,6 +412,10 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
     module.main()
 
     markdown = output_md.read_text(encoding="utf-8")
+    assert "## Report Generation" in markdown
+    assert "- Enabled flags: `--expected-goal-rd-runs`" in markdown
+    assert "- Expected run inputs: `11`" in markdown
+    assert "- Train CUDA: `6,7`" in markdown
     assert "## Expected Run Coverage" in markdown
     with output_csv.open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -428,6 +432,83 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
         "TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
         "bash /root/grpo/run_seed_alfworld_official.sh 1"
     )
+
+
+def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monkeypatch):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    logs_dir = work_root / "logs"
+    logs_dir.mkdir(parents=True)
+
+    eval_path = logs_dir / "eval10x_wm_obs_ce_l0p01_s0_results.txt"
+    eval_path.write_text(
+        "\n".join(
+            [
+                "EVAL10X_START label=wm_obs_ce_l0p01_s0 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=4,5 Tue",
+                "EVAL10X_RESULT n=10 mean=0.7500 std=0.0200",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    log_path = logs_dir / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0_20260630_010203.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "RUN_ALFWORLD_OFFICIAL seed=0 tag=wm_obs_ce_l0p01_s0 cuda=4,5 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0",
+                "Training Progress: 150/150",
+                "saved /work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0/global_step_150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    smoke_log = logs_dir / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_smoke_20260630_010203.log"
+    smoke_log.write_text(
+        "\n".join(
+            [
+                "RUN_ALFWORLD_OFFICIAL seed=0 tag=wm_obs_ce_smoke cuda=4,5 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_smoke",
+                "Training Progress: 3/150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_md = tmp_path / "report.md"
+    output_csv = tmp_path / "report.csv"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wm_results_table.py",
+            "--work-root",
+            str(work_root),
+            "--goal-rd-report",
+            "--train-cuda",
+            "6,7",
+            "--output-md",
+            str(output_md),
+            "--output-csv",
+            str(output_csv),
+        ],
+    )
+    module.main()
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert "- Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`" in markdown
+    assert "- Eval result inputs: `1`" in markdown
+    assert "- Train log inputs: `1`" in markdown
+    assert "- Expected run inputs: `11`" in markdown
+    assert "## Expected Run Coverage" in markdown
+    with output_csv.open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 11
+    by_key = {row["run_key"]: row for row in rows}
+    assert by_key["obs_ce_l0p01_s0"]["has_train_log"] == "yes"
+    assert by_key["obs_ce_l0p01_s0"]["has_eval"] == "yes"
+    assert by_key["obs_ce_l0p03_s1"]["train_command"] == (
+        "TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
+        "bash /root/grpo/run_seed_alfworld_official.sh 1"
+    )
+    assert all("smoke" not in row["train_log_path"] for row in rows)
 
 
 def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):

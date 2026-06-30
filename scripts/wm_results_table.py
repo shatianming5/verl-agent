@@ -135,6 +135,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Auto-discover standard artifacts under --work-root/logs and add them to explicit inputs.",
     )
+    parser.add_argument(
+        "--goal-rd-report",
+        action="store_true",
+        help="Shortcut for the standard GOAL_RD final report: enables standard layout discovery and expected runs.",
+    )
     parser.add_argument("--branch", default=None, help="Branch name to show in the report. Defaults to current git branch if available.")
     parser.add_argument("--train-cuda", default="<free_2gpu_pair>", help="CUDA_VISIBLE_DEVICES value to use in generated train commands.")
     parser.add_argument(
@@ -867,13 +872,52 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(result, key=lambda row: (order.get(str(row["objective"]), 8), str(row["objective"])))
 
 
-def render_markdown(rows: list[dict[str, Any]], branch: str = "", work_root: str = DEFAULT_WORK) -> str:
+def build_report_generation_metadata(
+    args: argparse.Namespace,
+    eval_paths: list[str],
+    train_logs: list[str],
+    diagnostic_paths: list[str],
+    expected_runs: list[str],
+) -> list[tuple[str, str]]:
+    enabled_flags = []
+    if args.goal_rd_report:
+        enabled_flags.append("--goal-rd-report")
+    if args.discover_standard_layout:
+        enabled_flags.append("--discover-standard-layout")
+    if args.expected_goal_rd_runs:
+        enabled_flags.append("--expected-goal-rd-runs")
+    return [
+        ("Enabled flags", " ".join(enabled_flags) if enabled_flags else "(none)"),
+        ("Eval result inputs", str(len(eval_paths))),
+        ("Train log inputs", str(len(train_logs))),
+        ("Diagnostic summary inputs", str(len(diagnostic_paths))),
+        ("Expected run inputs", str(len(expected_runs))),
+        ("Train CUDA", str(args.train_cuda)),
+        ("Train script", str(args.train_script)),
+        ("Eval CUDA", str(args.eval_cuda)),
+        ("Eval n", str(args.eval_n)),
+        ("Eval script", str(args.eval_script)),
+    ]
+
+
+def render_markdown(
+    rows: list[dict[str, Any]],
+    branch: str = "",
+    work_root: str = DEFAULT_WORK,
+    report_generation: list[tuple[str, str]] | None = None,
+) -> str:
     lines = ["# ALFWorld World-Model Results", ""]
     if branch:
         lines.append(f"- Branch: `{branch}`")
     lines.append(f"- Work root: `{work_root}`")
     lines.append(f"- Runs in table: `{len(rows)}`")
     lines.append("")
+    if report_generation:
+        lines.append("## Report Generation")
+        lines.append("")
+        for title, value in report_generation:
+            lines.append(f"- {title}: `{value}`")
+        lines.append("")
 
     columns = [
         ("run_key", "run"),
@@ -1033,6 +1077,9 @@ def write_text(path: str, text: str) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.goal_rd_report:
+        args.discover_standard_layout = True
+        args.expected_goal_rd_runs = True
     if args.discover_standard_layout:
         eval_paths, train_log_paths, diagnostic_paths = discover_standard_layout_paths(args.work_root)
         args.eval_result.extend(eval_paths)
@@ -1049,7 +1096,8 @@ def main() -> None:
     annotate_eval_readiness(rows, eval_cuda=args.eval_cuda, eval_n=args.eval_n, eval_script=args.eval_script)
     annotate_artifact_coverage(rows)
     branch = args.branch if args.branch is not None else git_branch()
-    markdown = render_markdown(rows, branch=branch, work_root=args.work_root)
+    report_generation = build_report_generation_metadata(args, eval_paths, train_logs, diagnostic_paths, expected_runs)
+    markdown = render_markdown(rows, branch=branch, work_root=args.work_root, report_generation=report_generation)
 
     if args.output_csv:
         write_csv(args.output_csv, rows)
