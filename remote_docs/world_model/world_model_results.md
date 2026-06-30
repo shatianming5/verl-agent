@@ -9,7 +9,7 @@
 ## Report Generation
 
 - Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`
-- Report revision: `ebea759bed69ec8e93d45b89fbee7f76b0f3fdf2`
+- Report revision: `758c10400cf4b1770b718c9865f75c4cd84eb640`
 - Eval result inputs: `6`
 - Train log inputs: `49`
 - Diagnostic summary inputs: `4`
@@ -45,8 +45,8 @@
 | obs_ce_l0p01_s0 | wm_obs_ce_l0p01_s0 | obs_ce | 0 | 0.01 |  | 0.7311 +/- 0.0244 (n=10) | 10 | evaluated | diagnosed | 0.7500 | obs_ce_loss=0.161 | 150 | missing_backup | CE 0.2732 | -1.1620 | 0.1509 | -0.0177 | evaluated;training_complete;diagnosed |
 | obs_ce_l0p01_s1 | wm_obs_ce_l0p01_s1 | obs_ce | 1 | 0.01 |  | 0.6118 +/- 0.0324 (n=10) | 10 | evaluated | diagnosed | 0.6410 | obs_ce_loss=0.147 | 150 | missing_backup | CE 0.2688 | -1.1601 | 0.1626 | -0.0495 | evaluated;training_complete;diagnosed |
 | obs_ce_l0p03_s0 | wm_obs_ce_l0p03_s0 | obs_ce | 0 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.1480 | obs_ce_loss=0.353 | 10 | missing_backup |  |  |  |  | training_seen |
-| obs_ce_l0p03_s1 | wm_obs_ce_l0p03_s1 | obs_ce | 1 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0620 | obs_ce_loss=0.522 | 7 | missing_backup |  |  |  |  | training_seen |
-| obs_ce_l0p05_s0 | wm_obs_ce_l0p05_s0 | obs_ce | 0 | 0.05 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0860 | obs_ce_loss=0.467 | 5 | missing_backup |  |  |  |  | training_seen |
+| obs_ce_l0p03_s1 | wm_obs_ce_l0p03_s1 | obs_ce | 1 | 0.03 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0620 | obs_ce_loss=0.408 | 8 | missing_backup |  |  |  |  | training_seen |
+| obs_ce_l0p05_s0 | wm_obs_ce_l0p05_s0 | obs_ce | 0 | 0.05 |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint | 0.0860 | obs_ce_loss=0.405 | 6 | missing_backup |  |  |  |  | training_seen |
 | obs_ce_l0p05_s1 | wm_obs_ce_l0p05_s1 | obs_ce | 1 | 0.05 |  |  |  | missing_training_log | missing_training_log |  |  |  | no_checkpoint |  |  |  |  |  |
 | latent_s0 | wmls_l1 | latent | 0 |  |  |  |  | waiting_for_checkpoint | waiting_for_checkpoint |  | latent_loss=1.007, cosine=-0.007 | 1 | no_checkpoint |  |  |  |  | training_complete |
 | latent_l0p001_s0 | wmlat_l0p001_s0 | latent | 0 |  | 0.001 | 0.6735 +/- 0.0267 (n=10) | 10 | evaluated | diagnosed | 0.7270 | latent_loss=0.317, cosine=0.683 | 150 | missing_backup | CE 1.4187 | -0.0064 | 0.1378 | -0.0384 | evaluated;training_complete;diagnosed |
