@@ -106,7 +106,21 @@ def test_render_markdown_includes_paths_and_comparison_table():
     assert "| run_step60 | 60 | 20 | 1.5000 | -0.5000 |" in markdown
 
 
-def test_main_writes_markdown_and_csv(tmp_path, monkeypatch):
+def test_render_svg_plots_ce_and_cosine_panels():
+    module = _load_module()
+    summary = _summary()
+    rows = module.build_rows(summary)
+
+    svg = module.render_svg([summary], [rows])
+
+    assert svg.startswith("<svg")
+    assert "token_mean_ce" in svg
+    assert "action_obs_cosine" in svg
+    assert "run_init" not in svg
+    assert "<polyline" in svg
+
+
+def test_main_writes_markdown_csv_and_svg(tmp_path, monkeypatch):
     module = _load_module()
     summary_path = tmp_path / "checkpoint_scores_summary.json"
     summary = _summary(path=str(summary_path))
@@ -114,6 +128,7 @@ def test_main_writes_markdown_and_csv(tmp_path, monkeypatch):
     summary_path.write_text(json.dumps(summary), encoding="utf-8")
     output_md = tmp_path / "report.md"
     output_csv = tmp_path / "report.csv"
+    output_svg = tmp_path / "report.svg"
 
     monkeypatch.setattr(
         sys,
@@ -126,11 +141,14 @@ def test_main_writes_markdown_and_csv(tmp_path, monkeypatch):
             str(output_md),
             "--output-csv",
             str(output_csv),
+            "--output-svg",
+            str(output_svg),
         ],
     )
     module.main()
 
     assert "checkpoint_scores_summary.json" in output_md.read_text(encoding="utf-8")
+    assert output_svg.read_text(encoding="utf-8").startswith("<svg")
     with output_csv.open(encoding="utf-8") as handle:
         csv_rows = list(csv.DictReader(handle))
     assert csv_rows[0]["checkpoint_label"] == "run_init"

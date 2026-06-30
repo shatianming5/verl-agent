@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
 import math
 import os
@@ -40,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-md", help="Markdown report path. Prints to stdout if no output path is provided.")
     parser.add_argument("--output-csv", help="Machine-readable comparison table path.")
+    parser.add_argument("--output-svg", help="Self-contained SVG plot path for CE and cosine checkpoint dynamics.")
     parser.add_argument(
         "--baseline-label",
         help="Checkpoint label to use for deltas. Defaults to the earliest checkpoint in each summary.",
@@ -202,6 +204,82 @@ def render_markdown(summaries: list[dict[str, Any]], rows_by_summary: list[list[
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _plot_points(rows: list[dict[str, Any]], key: str, x: int, y: int, width: int, height: int) -> tuple[list[tuple[float, float, str]], str, str]:
+    values = [coerce_float(row.get(key)) for row in rows]
+    finite = [value for value in values if value is not None]
+    if not finite:
+        return [], "", ""
+    min_value = min(finite)
+    max_value = max(finite)
+    if math.isclose(min_value, max_value):
+        pad = max(abs(min_value) * 0.05, 0.1)
+        min_value -= pad
+        max_value += pad
+    points = []
+    for idx, (row, value) in enumerate(zip(rows, values)):
+        if value is None:
+            continue
+        px = x + (width * idx / max(len(rows) - 1, 1))
+        py = y + height - ((value - min_value) / (max_value - min_value) * height)
+        points.append((px, py, str(row.get("checkpoint_step") or row.get("checkpoint_label") or idx)))
+    return points, f"{min_value:.3f}", f"{max_value:.3f}"
+
+
+def _polyline(points: list[tuple[float, float, str]]) -> str:
+    return " ".join(f"{px:.1f},{py:.1f}" for px, py, _ in points)
+
+
+def _render_panel(rows: list[dict[str, Any]], key: str, title: str, color: str, x: int, y: int, width: int, height: int) -> list[str]:
+    points, min_label, max_label = _plot_points(rows, key, x, y, width, height)
+    lines = [
+        f'<text x="{x}" y="{y - 16}" class="panel-title">{html.escape(title)}</text>',
+        f'<rect x="{x}" y="{y}" width="{width}" height="{height}" class="plot-bg"/>',
+        f'<line x1="{x}" y1="{y + height}" x2="{x + width}" y2="{y + height}" class="axis"/>',
+        f'<line x1="{x}" y1="{y}" x2="{x}" y2="{y + height}" class="axis"/>',
+    ]
+    if not points:
+        lines.append(f'<text x="{x + width / 2:.1f}" y="{y + height / 2:.1f}" text-anchor="middle" class="empty">no numeric data</text>')
+        return lines
+    lines.extend(
+        [
+            f'<text x="{x - 10}" y="{y + 4}" text-anchor="end" class="tick">{max_label}</text>',
+            f'<text x="{x - 10}" y="{y + height}" text-anchor="end" class="tick">{min_label}</text>',
+            f'<polyline points="{_polyline(points)}" fill="none" stroke="{color}" stroke-width="2.5"/>',
+        ]
+    )
+    for px, py, label in points:
+        lines.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="4" fill="{color}"/>')
+        lines.append(f'<text x="{px:.1f}" y="{y + height + 18}" text-anchor="middle" class="tick">{html.escape(label)}</text>')
+    return lines
+
+
+def render_svg(summaries: list[dict[str, Any]], rows_by_summary: list[list[dict[str, Any]]]) -> str:
+    width = 920
+    run_height = 390
+    height = 40 + run_height * len(rows_by_summary)
+    lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        "<style>",
+        "text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #111827; }",
+        ".title { font-size: 18px; font-weight: 700; }",
+        ".panel-title { font-size: 13px; font-weight: 650; }",
+        ".tick { font-size: 11px; fill: #4b5563; }",
+        ".empty { font-size: 12px; fill: #6b7280; }",
+        ".plot-bg { fill: #f9fafb; stroke: #d1d5db; }",
+        ".axis { stroke: #6b7280; stroke-width: 1; }",
+        "</style>",
+        '<text x="30" y="26" class="title">World-Model Checkpoint Diagnostics</text>',
+    ]
+    for idx, (summary, rows) in enumerate(zip(summaries, rows_by_summary)):
+        y0 = 60 + idx * run_height
+        run_name = Path(str(summary.get("_summary_path", "summary"))).parent.name or "summary"
+        lines.append(f'<text x="30" y="{y0 - 12}" class="panel-title">{html.escape(run_name)}</text>')
+        lines.extend(_render_panel(rows, "token_mean_ce", "token_mean_ce (lower is better)", "#2563eb", 85, y0, 780, 120))
+        lines.extend(_render_panel(rows, "row_mean_action_obs_cosine", "action_obs_cosine (higher is better)", "#16a34a", 85, y0 + 190, 780, 120))
+    lines.append("</svg>")
+    return "\n".join(lines) + "\n"
+
+
 def write_csv(path: str, rows: list[dict[str, Any]]) -> None:
     fieldnames = []
     for row in rows:
@@ -236,7 +314,9 @@ def main() -> None:
         write_csv(args.output_csv, all_rows)
     if args.output_md:
         write_text(args.output_md, markdown)
-    if not args.output_csv and not args.output_md:
+    if args.output_svg:
+        write_text(args.output_svg, render_svg(summaries, rows_by_summary))
+    if not args.output_csv and not args.output_md and not args.output_svg:
         sys.stdout.write(markdown)
 
 
