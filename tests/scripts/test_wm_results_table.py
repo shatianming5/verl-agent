@@ -170,6 +170,18 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     assert row["diagnostic_success_failure_cosine_gap"] == "0.3"
 
 
+def test_expand_paths_expands_explicit_glob_paths(tmp_path):
+    module = _load_module()
+    first = tmp_path / "eval10x_seed0_results.txt"
+    second = tmp_path / "eval10x_seed1_results.txt"
+    first.write_text("seed0", encoding="utf-8")
+    second.write_text("seed1", encoding="utf-8")
+
+    paths = module.expand_paths([str(tmp_path / "eval10x_*_results.txt")], [])
+
+    assert paths == [str(first), str(second)]
+
+
 def test_main_writes_markdown_and_csv(tmp_path, monkeypatch):
     module = _load_module()
     eval_path = tmp_path / "eval10x_seed0_results.txt"
@@ -225,3 +237,92 @@ def test_main_writes_markdown_and_csv(tmp_path, monkeypatch):
     assert rows[0]["run_key"] == "grpo_baseline_s0"
     assert rows[0]["eval_mean"] == "0.729"
     assert rows[0]["train_step"] == "150"
+
+
+def test_main_discovers_standard_layout(tmp_path, monkeypatch):
+    module = _load_module()
+    work_root = tmp_path / "work"
+    logs_dir = work_root / "logs"
+    diagnostics_dir = logs_dir / "world_model_diagnostics" / "wm_obs_ce_l0p01_s0"
+    diagnostics_dir.mkdir(parents=True)
+
+    eval_path = logs_dir / "eval10x_wm_obs_ce_l0p01_s0_results.txt"
+    eval_path.write_text(
+        "\n".join(
+            [
+                "EVAL10X_START label=wm_obs_ce_l0p01_s0 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=4,5 Tue",
+                "EVAL10X_RESULT n=10 mean=0.7500 std=0.0200",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    log_path = logs_dir / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0_20260630_010203.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "RUN_ALFWORLD_OFFICIAL seed=0 tag=wm_obs_ce_l0p01_s0 cuda=4,5 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0",
+                "Training Progress: 150/150",
+                "val/success_rate:0.734",
+                "world_model/obs_ce_loss:0.144",
+                "saved /work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0/global_step_150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    summary_path = diagnostics_dir / "checkpoint_scores_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "transition_jsonl": "/work/logs/world_model_rollouts/wm_obs_ce_l0p01_s0/150.wm_transitions.jsonl",
+                "rows": 8,
+                "checkpoints": [
+                    {
+                        "checkpoint_label": "init",
+                        "checkpoint_step": "init",
+                        "token_mean_ce": 1.8,
+                        "row_mean_action_obs_cosine": 0.1,
+                    },
+                    {
+                        "checkpoint_label": "step150",
+                        "checkpoint_step": "150",
+                        "token_mean_ce": 1.4,
+                        "row_mean_action_obs_cosine": 0.3,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_md = tmp_path / "report.md"
+    output_csv = tmp_path / "report.csv"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wm_results_table.py",
+            "--work-root",
+            str(work_root),
+            "--discover-standard-layout",
+            "--branch",
+            "world-model-latent-objective",
+            "--output-md",
+            str(output_md),
+            "--output-csv",
+            str(output_csv),
+        ],
+    )
+    module.main()
+
+    markdown = output_md.read_text(encoding="utf-8")
+    assert f"- Work root: `{work_root}`" in markdown
+    assert "0.7500 +/- 0.0200 (n=10)" in markdown
+    with output_csv.open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["run_key"] == "obs_ce_l0p01_s0"
+    assert row["eval_mean"] == "0.75"
+    assert row["train_step"] == "150"
+    assert row["diagnostic_token_mean_ce"] == "1.4"
+    assert row["diagnostic_delta_token_mean_ce"] == "-0.4"

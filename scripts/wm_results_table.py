@@ -94,6 +94,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--diagnostic-glob", action="append", default=[], help="Glob for checkpoint diagnostic summaries.")
     parser.add_argument("--work-root", default=DEFAULT_WORK, help="Remote work root used in example commands.")
+    parser.add_argument(
+        "--discover-standard-layout",
+        action="store_true",
+        help="Auto-discover standard artifacts under --work-root/logs and add them to explicit inputs.",
+    )
     parser.add_argument("--branch", default=None, help="Branch name to show in the report. Defaults to current git branch if available.")
     parser.add_argument("--output-md", help="Markdown report path. Prints to stdout if no output path is provided.")
     parser.add_argument("--output-csv", help="Machine-readable table path.")
@@ -106,10 +111,27 @@ def read_text(path: str) -> str:
 
 
 def expand_paths(paths: list[str], patterns: list[str]) -> list[str]:
-    expanded = list(paths)
+    expanded = []
+    for path in paths:
+        matches = glob.glob(path, recursive=True) if glob.has_magic(path) else []
+        expanded.extend(matches or [path])
     for pattern in patterns:
-        expanded.extend(glob.glob(pattern))
+        expanded.extend(glob.glob(pattern, recursive=True))
     return sorted(dict.fromkeys(str(Path(path)) for path in expanded))
+
+
+def standard_layout_globs(work_root: str) -> tuple[list[str], list[str], list[str]]:
+    logs = Path(work_root) / "logs"
+    return (
+        [str(logs / "eval10x_*_results.txt")],
+        [
+            str(logs / "grpo_qwen2.5_1.5b_alfworld_seed*.log"),
+            str(logs / "*wm_obs*.log"),
+            str(logs / "*wmlat*.log"),
+            str(logs / "*latent*.log"),
+        ],
+        [str(logs / "world_model_diagnostics" / "**" / "checkpoint_scores_summary.json")],
+    )
 
 
 def coerce_float(value: Any) -> float | None:
@@ -686,6 +708,11 @@ def write_text(path: str, text: str) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.discover_standard_layout:
+        eval_globs, train_log_globs, diagnostic_globs = standard_layout_globs(args.work_root)
+        args.eval_glob.extend(eval_globs)
+        args.train_log_glob.extend(train_log_globs)
+        args.diagnostic_glob.extend(diagnostic_globs)
     eval_paths = expand_paths(args.eval_result, args.eval_glob)
     train_logs = expand_paths(args.train_log, args.train_log_glob)
     diagnostic_paths = expand_paths(args.diagnostic_summary, args.diagnostic_glob)
