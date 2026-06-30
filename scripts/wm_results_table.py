@@ -1025,7 +1025,7 @@ def annotate_diagnostic_commands(
 def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
     for row in rows:
         has_train = bool(row.get("train_log_path"))
-        has_eval = bool(row.get("eval_result_path") or coerce_float(row.get("eval_mean")) is not None)
+        has_eval = row_has_eval(row)
         has_diagnostic = bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
         missing_diagnostic_reports = []
         if has_diagnostic:
@@ -1224,7 +1224,7 @@ def objective_coverage(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def row_has_eval(row: dict[str, Any]) -> bool:
-    return bool(row.get("eval_result_path") or coerce_float(row.get("eval_mean")) is not None)
+    return coerce_float(row.get("eval_mean")) is not None
 
 
 def row_has_diagnostic(row: dict[str, Any]) -> bool:

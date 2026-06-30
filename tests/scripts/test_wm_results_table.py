@@ -42,6 +42,36 @@ def test_parse_eval_result_infers_obs_ce_metadata(tmp_path):
     assert row["eval_checkpoint_path"].endswith("global_step_150")
 
 
+def test_incomplete_eval_file_does_not_count_as_eval_result(tmp_path):
+    module = _load_module()
+    result_path = tmp_path / "eval10x_wm_obs_ce_l0p01_s0_results.txt"
+    result_path.write_text(
+        "\n".join(
+            [
+                "EVAL10X_START label=wm_obs_ce_l0p01_s0 ckpt=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01/global_step_150 n=10 val_size=128 dataset=eval_in_distribution cuda=4,5 Tue",
+                "eval 0 env.seed=0 success_rate=0.7500 log=/work/logs/eval0.log",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    row = module.parse_eval_result(str(result_path))
+    row["expected"] = "yes"
+    row["train_log_path"] = "/work/logs/train.log"
+    rows = [row]
+    module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="/root/grpo/eval10x_alfworld.sh")
+    module.annotate_artifact_coverage(rows)
+    status = dict(module.goal_rd_deliverable_status(rows))
+
+    assert row["status"] == "eval_incomplete"
+    assert row["eval_readiness"] == "eval_incomplete"
+    assert row["has_eval"] == "no"
+    assert row["missing_artifacts"] == "eval,diagnostic"
+    assert row["final_report_readiness"] == "missing:eval,diagnostic"
+    assert status["Result table status"].startswith("0/1 tracked run(s) have eval results")
+    assert "eval_incomplete" in status["Result table status"]
+
+
 def test_parse_train_log_collects_progress_val_and_world_model_metrics(tmp_path):
     module = _load_module()
     log_path = tmp_path / "grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_20260630_010203.log"
