@@ -610,6 +610,9 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
     assert row["diagnostic_command"].startswith("python scripts/wm_score_transition_dump.py")
     assert row["diagnostic_model_path"] == "/model"
     assert row["diagnostic_output_csv_path"].endswith("checkpoint_scores.csv")
+    assert row["diagnostic_report_md_path"].endswith("checkpoint_diagnostics_report.md")
+    assert row["diagnostic_report_csv_path"].endswith("checkpoint_diagnostics_report.csv")
+    assert row["diagnostic_report_svg_path"].endswith("checkpoint_diagnostics_report.svg")
     assert row["diagnostic_checkpoint_count"] == 2
     assert row["diagnostic_max_length"] == 512
     assert row["diagnostic_batch_size"] == 4
@@ -839,6 +842,12 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     markdown = output_md.read_text(encoding="utf-8")
     assert f"- Work root: `{work_root}`" in markdown
     assert "0.7500 +/- 0.0200 (n=10)" in markdown
+    assert "- Diagnostic report: `" in markdown
+    assert "checkpoint_diagnostics_report.md" in markdown
+    assert "- Diagnostic report CSV: `" in markdown
+    assert "checkpoint_diagnostics_report.csv" in markdown
+    assert "- Diagnostic report SVG: `" in markdown
+    assert "checkpoint_diagnostics_report.svg" in markdown
     with output_csv.open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 1
@@ -850,5 +859,8 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     assert row["train_step"] == "150"
     assert row["diagnostic_token_mean_ce"] == "1.4"
     assert row["diagnostic_delta_token_mean_ce"] == "-0.4"
+    assert row["diagnostic_report_md_path"].endswith("checkpoint_diagnostics_report.md")
+    assert row["diagnostic_report_csv_path"].endswith("checkpoint_diagnostics_report.csv")
+    assert row["diagnostic_report_svg_path"].endswith("checkpoint_diagnostics_report.svg")
     assert "smoke" not in row["train_log_path"]
     assert "smoke" not in row["diagnostic_summary_path"]

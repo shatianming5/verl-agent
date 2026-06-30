@@ -75,6 +75,8 @@ CSV_COLUMNS = [
     "diagnostic_final_cosine",
     "diagnostic_best_step",
     "diagnostic_report_md_path",
+    "diagnostic_report_csv_path",
+    "diagnostic_report_svg_path",
     "diagnostic_summary_path",
     "diagnostic_command",
     "diagnostic_model_path",
@@ -601,6 +603,7 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
     failure_cosine = coerce_float(failure.get("row_mean_action_obs_cosine"))
     provenance = diagnostic_provenance_fields(summary)
 
+    summary_path = Path(path)
     return {
         **meta,
         "diagnostic_summary_path": path,
@@ -614,7 +617,9 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         "diagnostic_final_cosine": final.get("row_mean_action_obs_cosine", ""),
         "diagnostic_delta_action_obs_cosine": numeric_delta(final, baseline, "row_mean_action_obs_cosine"),
         "diagnostic_best_step": best.get("checkpoint_step", ""),
-        "diagnostic_report_md_path": str(Path(path).with_name("checkpoint_diagnostics_report.md")),
+        "diagnostic_report_md_path": str(summary_path.with_name("checkpoint_diagnostics_report.md")),
+        "diagnostic_report_csv_path": str(summary_path.with_name("checkpoint_diagnostics_report.csv")),
+        "diagnostic_report_svg_path": str(summary_path.with_name("checkpoint_diagnostics_report.svg")),
         **provenance,
         "diagnostic_success_failure_ce_gap": ""
         if success_ce is None or failure_ce is None
@@ -1145,6 +1150,9 @@ def render_markdown(
             ("eval_result_path", "Eval result"),
             ("eval_checkpoint_path", "Eval checkpoint"),
             ("latest_checkpoint_path", "Latest checkpoint"),
+            ("diagnostic_report_md_path", "Diagnostic report"),
+            ("diagnostic_report_csv_path", "Diagnostic report CSV"),
+            ("diagnostic_report_svg_path", "Diagnostic report SVG"),
             ("diagnostic_summary_path", "Diagnostic summary"),
             ("diagnostic_output_csv_path", "Diagnostic CSV"),
             ("train_log_path", "Train log"),
