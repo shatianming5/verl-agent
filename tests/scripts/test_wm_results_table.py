@@ -807,6 +807,8 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
             "--train-log",
             str(log_path),
             "--expected-goal-rd-runs",
+            "--report-revision",
+            "report-test-rev",
             "--train-cuda",
             "6,7",
             "--output-md",
@@ -820,6 +822,7 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
     markdown = output_md.read_text(encoding="utf-8")
     assert "## Report Generation" in markdown
     assert "- Enabled flags: `--expected-goal-rd-runs`" in markdown
+    assert "- Report revision: `report-test-rev`" in markdown
     assert "- Expected run inputs: `11`" in markdown
     assert "- Train CUDA: `6,7`" in markdown
     assert "## Expected Run Coverage" in markdown
@@ -888,6 +891,8 @@ def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monk
             "--work-root",
             str(work_root),
             "--goal-rd-report",
+            "--report-revision",
+            "preset-test-rev",
             "--train-cuda",
             "6,7",
             "--output-md",
@@ -900,6 +905,7 @@ def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monk
 
     markdown = output_md.read_text(encoding="utf-8")
     assert "- Enabled flags: `--goal-rd-report --discover-standard-layout --expected-goal-rd-runs`" in markdown
+    assert "- Report revision: `preset-test-rev`" in markdown
     assert "- Eval result inputs: `1`" in markdown
     assert "- Train log inputs: `1`" in markdown
     assert "- Expected run inputs: `11`" in markdown

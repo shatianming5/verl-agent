@@ -161,6 +161,11 @@ def parse_args() -> argparse.Namespace:
         help="Shortcut for the standard GOAL_RD final report: enables standard layout discovery and expected runs.",
     )
     parser.add_argument("--branch", default=None, help="Branch name to show in the report. Defaults to current git branch if available.")
+    parser.add_argument(
+        "--report-revision",
+        default=None,
+        help="Git commit or other revision identifier for the reporting code used to generate this report.",
+    )
     parser.add_argument("--train-cuda", default="<free_2gpu_pair>", help="CUDA_VISIBLE_DEVICES value to use in generated train commands.")
     parser.add_argument(
         "--train-script",
@@ -1214,6 +1219,20 @@ def git_branch() -> str:
     return result.stdout.strip()
 
 
+def git_revision() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return ""
+    return result.stdout.strip()
+
+
 def render_eval_cell(row: dict[str, Any]) -> str:
     mean = format_number(row.get("eval_mean"))
     std = format_number(row.get("eval_std"))
@@ -1506,6 +1525,7 @@ def build_report_generation_metadata(
         enabled_flags.append("--expected-goal-rd-runs")
     return [
         ("Enabled flags", " ".join(enabled_flags) if enabled_flags else "(none)"),
+        ("Report revision", str(args.report_revision or git_revision() or "(unknown)")),
         ("Eval result inputs", str(len(eval_paths))),
         ("Train log inputs", str(len(train_logs))),
         ("Diagnostic summary inputs", str(len(diagnostic_paths))),
