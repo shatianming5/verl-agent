@@ -24,6 +24,7 @@ This directory mirrors the current small report artifacts from gpudev for offlin
   - `world_model_diagnostics/wmlat_l0p001_s0/checkpoint_diagnostics_report.md`
   - `world_model_diagnostics/wmlat_l0p001_s0/checkpoint_diagnostics_report.svg`
   - `world_model_diagnostics/wmlat_l0p001_s0/checkpoint_scores_summary.json`
+  - `workstream_ab_progress_report.md`
   - `world_model_results.csv`
   - `world_model_results.md`
 
