@@ -17,7 +17,8 @@ ALLOW_ASSIGNED_PAIRS=${ALLOW_ASSIGNED_PAIRS:-0}
 
 JOBS=(
   "latent_l0p001_s1|wmlat_l0p001_s1|latent|1|0.001"
-  "obs_ce_l0p05_s1|wm_obs_ce_l0p05_s1|obs_ce|1|0.05"
+  "obs_ce_l0p001_s0|wm_obs_ce_l0p001_s0|obs_ce|0|0.001"
+  "obs_ce_l0p001_s1|wm_obs_ce_l0p001_s1|obs_ce|1|0.001"
 )
 
 log() {

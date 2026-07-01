@@ -30,12 +30,10 @@ GOAL_RD_EXPECTED_RUNS = [
     "grpo_baseline_s0:objective=grpo_baseline,seed=0,tag=official_4to5",
     "grpo_baseline_s1:objective=grpo_baseline,seed=1,tag=official_6to7",
     "grpo_baseline_s2:objective=grpo_baseline,seed=2,tag=official_s2",
+    "obs_ce_l0p001_s0:objective=obs_ce,seed=0,lambda_obs=0.001,tag=wm_obs_ce_l0p001_s0",
+    "obs_ce_l0p001_s1:objective=obs_ce,seed=1,lambda_obs=0.001,tag=wm_obs_ce_l0p001_s1",
     "obs_ce_l0p01_s0:objective=obs_ce,seed=0,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s0",
     "obs_ce_l0p01_s1:objective=obs_ce,seed=1,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s1",
-    "obs_ce_l0p03_s0:objective=obs_ce,seed=0,lambda_obs=0.03,tag=wm_obs_ce_l0p03_s0",
-    "obs_ce_l0p03_s1:objective=obs_ce,seed=1,lambda_obs=0.03,tag=wm_obs_ce_l0p03_s1",
-    "obs_ce_l0p05_s0:objective=obs_ce,seed=0,lambda_obs=0.05,tag=wm_obs_ce_l0p05_s0",
-    "obs_ce_l0p05_s1:objective=obs_ce,seed=1,lambda_obs=0.05,tag=wm_obs_ce_l0p05_s1",
     "latent_l0p001_s0:objective=latent,seed=0,lambda_latent=0.001,tag=wmlat_l0p001_s0",
     "latent_l0p001_s1:objective=latent,seed=1,lambda_latent=0.001,tag=wmlat_l0p001_s1",
 ]
@@ -1728,15 +1726,27 @@ def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, la
 
 
 def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
-    objective = "obs_ce"
+    objective = "grpo_baseline"
     objective_rows = [row for row in rows if str(row.get("objective") or "") == objective]
     diagnostic_rows = [row for row in objective_rows if row_has_diagnostic(row)]
     if not diagnostic_rows:
         return (
-            "Observation prediction features: pending; "
-            f"0/{len(objective_rows)} obs_ce run(s) have complete checkpoint diagnostics."
+            "GRPO baseline world-model state changes: pending; "
+            f"0/{len(objective_rows)} baseline run(s) have complete checkpoint diagnostics."
         )
 
+    delta_ce = [
+        value
+        for row in diagnostic_rows
+        for value in [coerce_float(row.get("diagnostic_delta_token_mean_ce"))]
+        if value is not None
+    ]
+    delta_cosine = [
+        value
+        for row in diagnostic_rows
+        for value in [coerce_float(row.get("diagnostic_delta_action_obs_cosine"))]
+        if value is not None
+    ]
     ce_gaps = [
         value
         for row in diagnostic_rows
@@ -1749,8 +1759,18 @@ def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
         for value in [coerce_float(row.get("diagnostic_success_failure_cosine_gap"))]
         if value is not None
     ]
-    if ce_gaps or cosine_gaps:
+    if delta_ce or delta_cosine or ce_gaps or cosine_gaps:
         parts = []
+        if delta_ce:
+            parts.append(
+                "token CE delta mean "
+                f"{average(delta_ce):+.4f} across {len(delta_ce)} baseline run(s)"
+            )
+        if delta_cosine:
+            parts.append(
+                "action-observation cosine delta mean "
+                f"{average(delta_cosine):+.4f} across {len(delta_cosine)} baseline run(s)"
+            )
         if ce_gaps:
             parts.append(
                 "failure-success CE gap mean "
@@ -1766,14 +1786,15 @@ def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
                 f"{sum(1 for value in cosine_gaps if value < 0)} negative)"
             )
         return (
-            "Observation prediction features: success/failure separation is quantified for "
-            f"{len(diagnostic_rows)}/{len(objective_rows)} obs_ce run(s); "
+            "GRPO baseline world-model state changes: checkpoint/state diagnostics are quantified for "
+            f"{len(diagnostic_rows)}/{len(objective_rows)} baseline run(s); "
             + "; ".join(parts)
             + ". Positive CE gap means failure trajectories have higher CE than success trajectories; "
-            "positive cosine gap means success trajectories have higher action-observation cosine."
+            "positive cosine gap means success trajectories have higher action-observation cosine. "
+            "This diagnostic is for vanilla GRPO baseline state changes, not obs_ce auxiliary runs."
         )
     return (
-        "Observation prediction features: partial evidence available; checkpoint diagnostics exist, "
+        "GRPO baseline world-model state changes: partial evidence available; checkpoint diagnostics exist, "
         "but success/failure gap fields are not populated."
     )
 
