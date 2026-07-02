@@ -16,6 +16,7 @@ Contain small torch utilities
 """
 
 import math
+import os
 from contextlib import contextmanager
 from typing import Dict, List, Optional, Union
 
@@ -68,16 +69,19 @@ def logprobs_from_logits(logits, labels, inplace_backward=True):
     Returns:
         Tensor: Log-probabilities of the target labels, shape logits.shape[:-1].
     """
-    if FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE:
+    use_flash_attn_ce = FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE and os.getenv("VERL_DISABLE_FLASH_ATTN_CE", "0").lower() not in ("1", "true", "yes", "on")
+    if use_flash_attn_ce:
         batch_dim = logits.shape[:-1]
         last_dim = logits.shape[-1]
-        logits = logits.reshape(-1, last_dim)
-        labels = labels.reshape(-1)
-        output = logprobs_from_logits_flash_attn(logits, labels, inplace_backward=inplace_backward)
-        output = output.view(*batch_dim)
-    else:
-        output = logprobs_from_logits_v2(logits, labels)
-    return output
+        flat_logits = logits.reshape(-1, last_dim)
+        flat_labels = labels.reshape(-1)
+        try:
+            output = logprobs_from_logits_flash_attn(flat_logits, flat_labels, inplace_backward=inplace_backward)
+            return output.view(*batch_dim)
+        except RuntimeError as exc:
+            if "Triton only support CUDA" not in str(exc):
+                raise
+    return logprobs_from_logits_v2(logits, labels)
 
 
 def logprobs_from_logits_flash_attn(logits, labels, inplace_backward=True):

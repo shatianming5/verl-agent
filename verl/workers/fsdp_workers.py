@@ -168,6 +168,23 @@ class ActorRolloutRefWorker(Worker):
             self.config.ref.log_prob_micro_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
             self.config.ref.log_prob_micro_batch_size_per_gpu = self.config.ref.log_prob_micro_batch_size
 
+        self.wm_latent_predictor = None
+
+    def _actor_world_model_config(self):
+        if not self._is_actor:
+            return {}
+        return self.config.actor.get("world_model", {})
+
+    def _latent_enabled(self):
+        world_model_config = self._actor_world_model_config()
+        return bool(world_model_config.get("latent_enable", False)) and float(world_model_config.get("lambda_latent", 0.0) or 0.0) > 0
+
+    def _latent_predictor_checkpoint_path(self, local_path):
+        return os.path.join(
+            local_path,
+            f"wm_latent_predictor_world_size_{dist.get_world_size()}_rank_{dist.get_rank()}.pt",
+        )
+
     def _build_model_optimizer(
         self,
         model_path,
@@ -357,12 +374,39 @@ class ActorRolloutRefWorker(Worker):
 
         log_gpu_memory_usage(f"After {role} FSDP init", logger=logger)
 
+        latent_predictor = None
+        if role == "actor" and optim_config is not None and self._latent_enabled():
+            from torch.nn.parallel import DistributedDataParallel as DDP
+            from verl.workers.actor import LatentTransitionPredictor
+
+            world_model_config = self._actor_world_model_config()
+            hidden_size = getattr(actor_model_config, "hidden_size", None)
+            if hidden_size is None and hasattr(actor_model_config, "text_config"):
+                hidden_size = getattr(actor_model_config.text_config, "hidden_size", None)
+            if hidden_size is None:
+                raise ValueError("world_model latent loss requires actor model config hidden_size")
+
+            target_device = torch.device(device_name, get_torch_device().current_device()) if is_cuda_available else torch.device("cpu")
+            latent_predictor = LatentTransitionPredictor(
+                hidden_size=hidden_size,
+                predictor_hidden_size=world_model_config.get("latent_predictor_hidden_size", 0),
+                dropout=world_model_config.get("latent_predictor_dropout", 0.0),
+            ).to(device=target_device, dtype=torch.float32)
+            ddp_kwargs = {}
+            if is_cuda_available:
+                ddp_kwargs["device_ids"] = [get_torch_device().current_device()]
+            latent_predictor = DDP(latent_predictor, **ddp_kwargs)
+            log_gpu_memory_usage("After world-model latent predictor init", logger=logger)
+
         # TODO: add more optimizer args into config
         if role == "actor" and optim_config is not None:
             from verl.utils.torch_functional import get_constant_schedule_with_warmup, get_cosine_schedule_with_warmup
 
+            optimizer_parameters = list(actor_module_fsdp.parameters())
+            if latent_predictor is not None:
+                optimizer_parameters.extend(latent_predictor.parameters())
             actor_optimizer = optim.AdamW(
-                actor_module_fsdp.parameters(),
+                optimizer_parameters,
                 lr=optim_config.lr,
                 betas=optim_config.get("betas", (0.9, 0.999)),
                 weight_decay=optim_config.get("weight_decay", 1e-2),
@@ -391,7 +435,7 @@ class ActorRolloutRefWorker(Worker):
             actor_optimizer = None
             actor_lr_scheduler = None
 
-        return actor_module_fsdp, actor_optimizer, actor_lr_scheduler, actor_model_config
+        return actor_module_fsdp, actor_optimizer, actor_lr_scheduler, actor_model_config, latent_predictor
 
     def _build_rollout(self, trust_remote_code=False):
         from torch.distributed.device_mesh import init_device_mesh
@@ -532,6 +576,7 @@ class ActorRolloutRefWorker(Worker):
                 self.actor_optimizer,
                 self.actor_lr_scheduler,
                 self.actor_model_config,
+                self.wm_latent_predictor,
             ) = self._build_model_optimizer(
                 model_path=local_path,
                 fsdp_config=fsdp_config,
@@ -563,7 +608,12 @@ class ActorRolloutRefWorker(Worker):
             with open_dict(self.config.actor):
                 self.config.actor.use_remove_padding = use_remove_padding
                 self.config.actor.use_fused_kernels = use_fused_kernels
-            self.actor = DataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
+            self.actor = DataParallelPPOActor(
+                config=self.config.actor,
+                actor_module=self.actor_module_fsdp,
+                actor_optimizer=self.actor_optimizer,
+                latent_predictor=self.wm_latent_predictor,
+            )
 
         if self._is_rollout:
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
@@ -755,6 +805,11 @@ class ActorRolloutRefWorker(Worker):
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
 
         self.checkpoint_manager.save_checkpoint(local_path=local_path, hdfs_path=hdfs_path, global_step=global_step, max_ckpt_to_keep=max_ckpt_to_keep)
+        if self.wm_latent_predictor is not None:
+            os.makedirs(local_path, exist_ok=True)
+            predictor_path = self._latent_predictor_checkpoint_path(local_path)
+            torch.save(self.wm_latent_predictor.state_dict(), predictor_path)
+            print(f"[rank-{self.rank}]: Saving world-model latent predictor to {os.path.abspath(predictor_path)}")
         dist.barrier()
 
         if self._is_lora and isinstance(self.actor_module, PeftModel):
@@ -791,6 +846,15 @@ class ActorRolloutRefWorker(Worker):
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
 
         self.checkpoint_manager.load_checkpoint(local_path=local_path, hdfs_path=hdfs_path, del_local_after_load=del_local_after_load)
+        if self.wm_latent_predictor is not None:
+            predictor_path = self._latent_predictor_checkpoint_path(local_path)
+            if not os.path.exists(predictor_path):
+                raise FileNotFoundError(f"Missing world-model latent predictor checkpoint: {predictor_path}")
+            local_predictor_path = copy_to_local(predictor_path)
+            map_location = f"{device_name}:{get_torch_device().current_device()}" if is_cuda_available else "cpu"
+            predictor_state = torch.load(local_predictor_path, map_location=map_location, weights_only=False)
+            self.wm_latent_predictor.load_state_dict(predictor_state)
+            print(f"[rank-{self.rank}]: Loaded world-model latent predictor from {predictor_path}")
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)

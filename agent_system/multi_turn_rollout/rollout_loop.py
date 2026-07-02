@@ -26,6 +26,21 @@ from agent_system.environments import EnvironmentManagerBase
 from typing import List, Dict
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 
+
+def _object_array_from_optional_text(values, batch_size: int):
+    if values is None:
+        return np.array(["" for _ in range(batch_size)], dtype=object)
+    return np.array([str(value) if value is not None else "" for value in values], dtype=object)
+
+
+def _get_config_value(config, key: str, default=None):
+    if config is None:
+        return default
+    if hasattr(config, "get"):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
 class TrajectoryCollector:
     def __init__(self, config, tokenizer: PreTrainedTokenizer, processor=None):
         """
@@ -39,6 +54,130 @@ class TrajectoryCollector:
         self.config = config
         self.tokenizer = tokenizer
         self.processor = processor
+
+    def _world_model_config(self):
+        actor_config = _get_config_value(self.config.actor_rollout_ref, "actor", {})
+        return _get_config_value(actor_config, "world_model", {})
+
+    def _obs_ce_enabled(self):
+        world_model_config = self._world_model_config()
+        lambda_obs = _get_config_value(world_model_config, "lambda_obs", _get_config_value(world_model_config, "obs_ce_coef", 0.0))
+        return bool(_get_config_value(world_model_config, "obs_ce_enable", False)) and float(lambda_obs or 0.0) > 0
+
+    def _latent_enabled(self):
+        world_model_config = self._world_model_config()
+        lambda_latent = _get_config_value(world_model_config, "lambda_latent", 0.0)
+        return bool(_get_config_value(world_model_config, "latent_enable", False)) and float(lambda_latent or 0.0) > 0
+
+    def _build_obs_ce_batch(self, prev_obs, actions, next_obs, active_masks, batch_size: int) -> dict:
+        world_model_config = self._world_model_config()
+        max_length = max(int(_get_config_value(world_model_config, "obs_ce_max_length", 512)), 2)
+        target_source = _get_config_value(world_model_config, "obs_ce_target", "text")
+
+        prev_values = _object_array_from_optional_text(prev_obs.get(target_source, prev_obs.get("text", None)), batch_size)
+        next_values = _object_array_from_optional_text(next_obs.get(target_source, next_obs.get("text", None)), batch_size)
+        pad_token_id = self.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 0
+
+        input_ids_rows = []
+        attention_mask_rows = []
+        loss_mask_rows = []
+        for idx in range(batch_size):
+            prefix = f"Current observation:\n{prev_values[idx]}\n\nAction:\n{actions[idx]}\n\nNext observation:\n"
+            target = str(next_values[idx])
+            prefix_ids = self.tokenizer.encode(prefix, add_special_tokens=False)
+            target_ids = self.tokenizer.encode(target, add_special_tokens=False)
+            target_ids = target_ids[:max(max_length - 1, 0)]
+            prefix_budget = max(max_length - len(target_ids), 0)
+            prefix_ids = prefix_ids[-prefix_budget:] if prefix_budget > 0 else []
+
+            token_ids = (prefix_ids + target_ids)[:max_length]
+            target_start = len(prefix_ids)
+            seq_len = len(token_ids)
+
+            input_ids = torch.full((max_length,), pad_token_id, dtype=torch.long)
+            attention_mask = torch.zeros((max_length,), dtype=torch.long)
+            loss_mask = torch.zeros((max_length,), dtype=torch.float32)
+            if seq_len > 0:
+                input_ids[:seq_len] = torch.tensor(token_ids, dtype=torch.long)
+                attention_mask[:seq_len] = 1
+                if active_masks[idx] and target_start < seq_len:
+                    loss_mask[target_start:seq_len] = 1.0
+                    loss_mask[0] = 0.0
+
+            input_ids_rows.append(input_ids)
+            attention_mask_rows.append(attention_mask)
+            loss_mask_rows.append(loss_mask)
+
+        attention_mask = torch.stack(attention_mask_rows, dim=0)
+        return {
+            "wm_obs_input_ids": torch.stack(input_ids_rows, dim=0),
+            "wm_obs_attention_mask": attention_mask,
+            "wm_obs_position_ids": compute_position_id_with_mask(attention_mask),
+            "wm_obs_loss_mask": torch.stack(loss_mask_rows, dim=0),
+        }
+
+    def _build_latent_batch(self, prev_obs, actions, next_obs, active_masks, batch_size: int) -> dict:
+        world_model_config = self._world_model_config()
+        max_length = max(int(_get_config_value(world_model_config, "latent_max_length", 512)), 3)
+        target_source = _get_config_value(world_model_config, "latent_target", "text")
+
+        prev_values = _object_array_from_optional_text(prev_obs.get(target_source, prev_obs.get("text", None)), batch_size)
+        next_values = _object_array_from_optional_text(next_obs.get(target_source, next_obs.get("text", None)), batch_size)
+        pad_token_id = self.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else 0
+
+        input_ids_rows = []
+        attention_mask_rows = []
+        action_pos_rows = []
+        obs_pos_rows = []
+        loss_mask_rows = []
+        bridge_ids = self.tokenizer.encode("\n\nNext observation:\n", add_special_tokens=False)
+        bridge_ids = bridge_ids[-max(max_length - 2, 0):]
+
+        for idx in range(batch_size):
+            prefix = f"Current observation:\n{prev_values[idx]}\n\nAction:\n{actions[idx]}"
+            target = str(next_values[idx])
+            prefix_ids = self.tokenizer.encode(prefix, add_special_tokens=False)
+            target_ids = self.tokenizer.encode(target, add_special_tokens=False)
+            if not prefix_ids:
+                prefix_ids = [pad_token_id]
+
+            target_budget = max(max_length - 1 - len(bridge_ids), 0)
+            target_ids = target_ids[:target_budget]
+            suffix_ids = bridge_ids + target_ids
+            prefix_budget = max(max_length - len(suffix_ids), 1)
+            prefix_ids = prefix_ids[-prefix_budget:]
+
+            token_ids = (prefix_ids + suffix_ids)[:max_length]
+            seq_len = len(token_ids)
+            action_pos = max(min(len(prefix_ids) - 1, seq_len - 1), 0)
+            obs_pos = max(seq_len - 1, 0)
+            use_row = bool(active_masks[idx]) and bool(target_ids) and action_pos < obs_pos
+
+            input_ids = torch.full((max_length,), pad_token_id, dtype=torch.long)
+            attention_mask = torch.zeros((max_length,), dtype=torch.long)
+            if seq_len > 0:
+                input_ids[:seq_len] = torch.tensor(token_ids, dtype=torch.long)
+                attention_mask[:seq_len] = 1
+
+            input_ids_rows.append(input_ids)
+            attention_mask_rows.append(attention_mask)
+            action_pos_rows.append(action_pos)
+            obs_pos_rows.append(obs_pos)
+            loss_mask_rows.append(1.0 if use_row else 0.0)
+
+        attention_mask = torch.stack(attention_mask_rows, dim=0)
+        return {
+            "wm_latent_input_ids": torch.stack(input_ids_rows, dim=0),
+            "wm_latent_attention_mask": attention_mask,
+            "wm_latent_position_ids": compute_position_id_with_mask(attention_mask),
+            "wm_latent_action_pos": torch.tensor(action_pos_rows, dtype=torch.long),
+            "wm_latent_obs_pos": torch.tensor(obs_pos_rows, dtype=torch.long),
+            "wm_latent_loss_mask": torch.tensor(loss_mask_rows, dtype=torch.float32),
+        }
 
     def preprocess_single_sample(
         self,
@@ -331,6 +470,7 @@ class TrajectoryCollector:
         # Trajectory collection loop
         for _step in range(self.config.env.max_steps):
             active_masks = np.logical_not(is_done)
+            prev_obs_text = _object_array_from_optional_text(obs.get('text', None), batch_size)
 
             batch = self.preprocess_batch(gen_batch=gen_batch, obs=obs)
 
@@ -363,6 +503,7 @@ class TrajectoryCollector:
             text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
             
             next_obs, rewards, dones, infos = envs.step(text_actions)
+            next_obs_text = _object_array_from_optional_text(next_obs.get('text', None), batch_size)
 
             
             if len(rewards.shape) == 2:
@@ -386,6 +527,27 @@ class TrajectoryCollector:
             assert len(rewards) == batch_size, f"env should return rewards for all environments, got {len(rewards)} rewards for {batch_size} environments"
             batch.non_tensor_batch['rewards'] = torch_to_numpy(rewards, is_object=True)
             batch.non_tensor_batch['active_masks'] = torch_to_numpy(active_masks, is_object=True)
+            batch.non_tensor_batch['wm_step_idx'] = np.array([_step for _ in range(batch_size)], dtype=np.int32)
+            batch.non_tensor_batch['wm_prev_obs_text'] = prev_obs_text
+            batch.non_tensor_batch['wm_action_text'] = np.array([str(action) for action in text_actions], dtype=object)
+            batch.non_tensor_batch['wm_next_obs_text'] = next_obs_text
+            batch.non_tensor_batch['wm_done_after_action'] = np.asarray(dones, dtype=bool)
+            if self._obs_ce_enabled():
+                batch.batch.update(self._build_obs_ce_batch(
+                    prev_obs=obs,
+                    actions=text_actions,
+                    next_obs=next_obs,
+                    active_masks=active_masks,
+                    batch_size=batch_size,
+                ))
+            if self._latent_enabled():
+                batch.batch.update(self._build_latent_batch(
+                    prev_obs=obs,
+                    actions=text_actions,
+                    next_obs=next_obs,
+                    active_masks=active_masks,
+                    batch_size=batch_size,
+                ))
             
             # Update episode lengths for active environments
             batch_list: list[dict] = to_list_of_dict(batch)

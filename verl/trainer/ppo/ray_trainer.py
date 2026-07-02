@@ -662,6 +662,70 @@ class RayPPOTrainer:
 
         print(f"Dumped generations to {filename}")
 
+    @staticmethod
+    def _json_safe_value(value):
+        if isinstance(value, np.ndarray):
+            return RayPPOTrainer._json_safe_value(value.tolist())
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, torch.Tensor):
+            return RayPPOTrainer._json_safe_value(value.detach().cpu().tolist())
+        if isinstance(value, (list, tuple)):
+            return [RayPPOTrainer._json_safe_value(item) for item in value]
+        if isinstance(value, dict):
+            return {str(k): RayPPOTrainer._json_safe_value(v) for k, v in value.items()}
+        return value
+
+    def _dump_world_model_transitions(self, batch: DataProto, dump_path, split="train", append=False, batch_idx=None):
+        """Dump captured ALFWorld transition text for world-model diagnostics."""
+        wm_keys = [
+            "wm_step_idx",
+            "wm_prev_obs_text",
+            "wm_action_text",
+            "wm_next_obs_text",
+            "wm_done_after_action",
+        ]
+        missing_keys = [key for key in wm_keys if key not in batch.non_tensor_batch]
+        if missing_keys:
+            return
+
+        os.makedirs(dump_path, exist_ok=True)
+        split_suffix = "" if split == "train" else f".{split}"
+        filename = os.path.join(dump_path, f"{self.global_steps}{split_suffix}.wm_transitions.jsonl")
+        n = len(batch.non_tensor_batch["wm_step_idx"])
+        optional_keys = [
+            "traj_uid",
+            "uid",
+            "data_source",
+            "rewards",
+            "active_masks",
+            "is_action_valid",
+            "episode_rewards",
+            "episode_lengths",
+            "tool_callings",
+        ]
+        optional_keys.extend(key for key in batch.non_tensor_batch if "success_rate" in key)
+
+        mode = "a" if append else "w"
+        with open(filename, mode) as f:
+            for i in range(n):
+                entry = {
+                    "schema_version": "wm_transition_v1",
+                    "global_step": self.global_steps,
+                    "split": split,
+                    "row_idx": i,
+                }
+                if batch_idx is not None:
+                    entry["batch_idx"] = batch_idx
+                for key in wm_keys + optional_keys:
+                    values = batch.non_tensor_batch.get(key)
+                    if values is None or len(values) != n:
+                        continue
+                    entry[key] = self._json_safe_value(values[i])
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        print(f"Dumped world-model transitions to {filename}")
+
     def _maybe_log_val_generations(self, inputs, outputs, scores):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
@@ -698,7 +762,7 @@ class RayPPOTrainer:
         sample_outputs = []
         sample_scores = []
 
-        for test_data in self.val_dataloader:
+        for val_batch_idx, test_data in enumerate(self.val_dataloader):
             test_batch = DataProto.from_single_dict(test_data)
 
             # repeat test batch
@@ -781,6 +845,16 @@ class RayPPOTrainer:
                     # all success_rate should be the same
                     for i in range(1, len(test_batch.non_tensor_batch[k])):
                         assert test_batch.non_tensor_batch[k][0] == test_batch.non_tensor_batch[k][i], f'not all success_rate are the same, 0: {test_batch.non_tensor_batch[k][0]}, {i}: {test_batch.non_tensor_batch[k][i]}'
+
+            validation_data_dir = self.config.trainer.get("validation_data_dir", None)
+            if validation_data_dir:
+                self._dump_world_model_transitions(
+                    batch=test_batch,
+                    dump_path=validation_data_dir,
+                    split="val",
+                    append=val_batch_idx > 0,
+                    batch_idx=val_batch_idx,
+                )
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
@@ -1107,6 +1181,11 @@ class RayPPOTrainer:
                     # batch = batch.union(gen_batch_output)
                     del batch
                     batch = gen_batch_output
+
+                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
+                    if rollout_data_dir:
+                        with _timer("dump_world_model_transitions", timing_raw):
+                            self._dump_world_model_transitions(batch=batch, dump_path=rollout_data_dir)
 
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.GiGPO:
                         step_rewards_tensor = core_gigpo.compute_step_discounted_returns(

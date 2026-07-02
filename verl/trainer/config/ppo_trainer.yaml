@@ -66,6 +66,19 @@ actor_rollout_ref:
     ulysses_sequence_parallel_size: 1 # sp size
     policy_loss:
       loss_mode: "vanilla"
+    world_model:
+      obs_ce_enable: False
+      lambda_obs: 0.0
+      obs_ce_coef: 0.0
+      obs_ce_max_length: 512
+      obs_ce_target: text
+      obs_ce_loss_agg_mode: token-mean
+      latent_enable: False
+      lambda_latent: 0.0
+      latent_max_length: 512
+      latent_target: text
+      latent_predictor_hidden_size: 0
+      latent_predictor_dropout: 0.0
     checkpoint:
       contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
     optim:

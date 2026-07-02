@@ -322,42 +322,13 @@ class DataParallelPPOActor(BasePPOActor):
             row_idx = torch.arange(hidden.size(0), device=hidden.device)
             action_hidden = hidden[row_idx, action_pos.to(device=hidden.device)]
             obs_hidden = hidden[row_idx, obs_pos.to(device=hidden.device)].detach()
-            if self.latent_predictor is not None and bool(self._world_model_config().get("latent_use_predictor", False)):
-                pred_hidden = self.latent_predictor(action_hidden)
-            else:
-                # Default Workstream C: direct cosine on action-end hidden, no predictor.
-                pred_hidden = action_hidden
+            pred_hidden = self.latent_predictor(action_hidden)
 
         mask = loss_mask.to(dtype=torch.float32, device=hidden.device)
         cosine = torch.nn.functional.cosine_similarity(pred_hidden.float(), obs_hidden.float(), dim=-1)
         loss_vec = 1.0 - cosine
         row_count = mask.sum()
-        wm_cfg = self._world_model_config()
-        use_contrastive = bool(wm_cfg.get("latent_contrastive", False))
-        pos_cos = neg_cos = None
-        if use_contrastive:
-            tau = float(wm_cfg.get("latent_temperature", 0.1) or 0.1)
-            mb = mask.bool()
-            anchor = pred_hidden.float()[mb]
-            target = obs_hidden.float()[mb]
-            anchor = anchor - anchor.mean(dim=0, keepdim=True)
-            target = target - target.mean(dim=0, keepdim=True)
-            anchor = torch.nn.functional.normalize(anchor, dim=-1)
-            target = torch.nn.functional.normalize(target, dim=-1)
-            n_c = anchor.size(0)
-            if n_c >= 2:
-                logits_c = anchor @ target.t() / tau
-                labels_c = torch.arange(n_c, device=logits_c.device)
-                latent_loss = torch.nn.functional.cross_entropy(logits_c, labels_c)
-                with torch.no_grad():
-                    sim_c = anchor @ target.t()
-                    pos_cos = sim_c.diag().mean()
-                    neg_cos = (sim_c.sum() - sim_c.diag().sum()) / (n_c * (n_c - 1))
-            elif n_c == 1:
-                latent_loss = (1.0 - (anchor * target).sum(dim=-1)).mean()
-            else:
-                latent_loss = pred_hidden.float().sum() * 0.0
-        elif row_count.detach().item() <= 0:
+        if row_count.detach().item() <= 0:
             latent_loss = loss_vec.sum() * 0.0
         else:
             latent_loss = (loss_vec * mask).sum() / row_count
@@ -375,10 +346,6 @@ class DataParallelPPOActor(BasePPOActor):
             "action_feature_var": centered_action.pow(2).mean().detach().item(),
             "obs_feature_var": centered_obs.pow(2).mean().detach().item(),
         }
-        if pos_cos is not None:
-            metrics["pos_cosine"] = pos_cos.item()
-            metrics["neg_cosine"] = neg_cos.item()
-            metrics["gap"] = (pos_cos - neg_cos).item()
         return latent_loss, metrics
 
     def _optimizer_step(self):
@@ -639,12 +606,6 @@ class DataParallelPPOActor(BasePPOActor):
                             "world_model/latent_action_feature_var": latent_metrics["action_feature_var"],
                             "world_model/latent_obs_feature_var": latent_metrics["obs_feature_var"],
                         })
-                        if "gap" in latent_metrics:
-                            append_to_dict(metrics, {
-                                "world_model/latent_pos_cosine": latent_metrics["pos_cosine"],
-                                "world_model/latent_neg_cosine": latent_metrics["neg_cosine"],
-                                "world_model/latent_gap": latent_metrics["gap"],
-                            })
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
