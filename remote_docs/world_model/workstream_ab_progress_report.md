@@ -1,9 +1,9 @@
 # Workstream A/B 进展报告
 
-- 时间戳：2026-07-01 13:31 CST
+- 时间戳：2026-07-02 17:15 CST
 - 分支：`world-model-latent-objective`
 - 结果快照：从 gpudev 镜像过来的 `remote_docs/world_model/world_model_results.{md,csv}`
-- 实时状态来源：2026-07-01 对 gpudev 进程和 GPU 状态做的只读检查
+- 实时状态来源：2026-07-02 对 gpudev eval10x 结果文件、launcher 进程和 GPU 状态做的只读检查
 
 ## 范围
 
@@ -15,13 +15,13 @@
 
 ## 执行摘要
 
-Workstream A 已经实现，但目前完成的 `lambda_obs=0.01` 不是稳定提升。两个 seed 的 eval10x 均值是 `0.6714`，低于当前镜像结果里按 3 个 baseline seed 聚合出来的 eval10x baseline `0.7065`，delta 为 `-0.0351`。这里的 `0.7065` 是 seed0/1/2 的 eval10x 均值，不是单个 seed 或 online validation 数字；如果和之前报备的 baseline 对比，必须先确认用的是同一个口径。
+Workstream A 已经实现，并且现在有两个完整的 obs-CE 条件：`lambda_obs=0.01` 和 `lambda_obs=0.001`。两者都不是稳定提升。`lambda_obs=0.01` 两个 seed 的 eval10x 均值是 `0.6714`，低于当前镜像结果里按 3 个 baseline seed 聚合出来的 eval10x baseline `0.7065`，delta 为 `-0.0351`。`lambda_obs=0.001` 两个 seed 的 eval10x 聚合均值是 `0.5470`，delta 为 `-0.1595`。这里的 `0.7065` 是 seed0/1/2 的 eval10x 均值，不是单个 seed 或 online validation 数字；如果和之前报备的 baseline 对比，必须先确认用的是同一个口径。
 
-因为 `0.01` 已经造成负向结果，下一步 sweep 不应继续往更大的 `0.03`、`0.05` 推，而应该优先评测更小的 `lambda_obs=0.001`。`0.03` 和 `0.05` 已经有部分早期训练/排队痕迹，但它们不再应被视为 evidence-driven 的下一步主线。
+因为 `0.001` 也明显负向，下一步 sweep 不应继续往更大的 `0.03`、`0.05` 推。`0.03` 和 `0.05` 已经有部分早期训练/排队痕迹，但它们不再应被视为 evidence-driven 的下一步主线。当前更合理的 A 方向是停止把 obs-CE lambda sweep 当作主线，转为分析为什么 auxiliary head 学到 next-observation 目标后没有转化成任务成功率。
 
 Workstream B 目前只有 baseline seed0 的 checkpoint/state 诊断完成。这个诊断显示，在 vanilla GRPO baseline 上，从 init 到 step 150，token CE 从 `1.3793` 变到 `1.4330`，delta `+0.0537`；action-observation cosine 从 `0.6144` 变到 `0.6901`，delta `+0.0757`。也就是说，baseline 训练过程中 action-observation 表征相似度增强，但 next-observation token CE 并没有变好。baseline seed1/seed2 已 ready for diagnostic，但之前诊断进程卡在 Ceph D-state。
 
-当前主要阻塞仍是基础设施，不是 GPU 可用性。剩余排队 run 卡在和 Ceph 相关的 D-state，位置在数据预处理或 metadata 访问阶段。GPU `2,3,4,5` 实际上空闲，但由于 Ceph 上的 repo/model/data 路径无法稳定读取，任务还没有进入训练。
+基础设施状态已经改善：Workstream A 的 `lambda_obs=0.001` 训练和 eval10x 已通过 gpudev 本地盘路径完成，不再被 Ceph 阻塞。Workstream B 的 seed1/seed2 baseline diagnostics 仍应避免依赖 Ceph repo/model/data 路径，优先使用本地 staging 后的 model/repo/data。
 
 ## Baseline 口径校正
 
@@ -40,33 +40,30 @@ Workstream B 目前只有 baseline seed0 的 checkpoint/state 诊断完成。这
 
 ### 已完成证据
 
-目前唯一完整的 obs-CE 条件是 `lambda_obs=0.01`：
+目前完整的 obs-CE 条件包括 `lambda_obs=0.01` 和 `lambda_obs=0.001`：
 
-| run | seed | eval10x 均值 +/- 标准差 | 训练步数 | 最后 WM 指标 | 诊断状态 |
+| run | seed | eval10x 均值 +/- 标准差 | 训练步数 | 最后可用指标 | 诊断状态 |
 | --- | ---: | ---: | ---: | --- | --- |
 | `obs_ce_l0p01_s0` | 0 | `0.7311 +/- 0.0244` | 150 | `obs_ce_loss=0.161` | 已诊断 |
 | `obs_ce_l0p01_s1` | 1 | `0.6118 +/- 0.0324` | 150 | `obs_ce_loss=0.147` | 已诊断 |
 | `lambda_obs=0.01` 聚合 | 0,1 | `0.6714` | 已完成 |  | 相对 3-seed eval10x baseline delta `-0.0351` |
+| `obs_ce_l0p001_s0` | 0 | `0.4869 +/- 0.0188` | 150 | online val success `0.594` | 待诊断 |
+| `obs_ce_l0p001_s1` | 1 | `0.6071 +/- 0.0309` | 150 | online val success `0.617` | 待诊断 |
+| `lambda_obs=0.001` 聚合 | 0,1 | `0.5470 +/- 0.0665` | 已完成 | 20 次 eval 合并 | 相对 3-seed eval10x baseline delta `-0.1595` |
 
-解读：`lambda_obs=0.01` 不是一个可靠提升。它可以和一个较强 seed（`s0`）共存，但第二个 seed 下滑太多，使整体均值变成负向。由于每个已完成 seed 都已经做过 eval10x，剩余不确定性主要来自不同 seed 和不同 lambda 设置，而不是单次 eval launch 内部的随机性。
+解读：`lambda_obs=0.01` 不是一个可靠提升；它可以和一个较强 seed（`s0`）共存，但第二个 seed 下滑太多，使整体均值变成负向。`lambda_obs=0.001` 没有缓解这个问题，反而更差，尤其 seed0 的 10x 均值只有 `0.4869`。由于每个已完成 seed 都已经做过 eval10x，剩余不确定性主要来自不同 seed 和不同 objective 设计，而不是单次 eval launch 内部的随机性。
 
-### 正确的下一步 sweep
+### Sweep 状态更新
 
-因为 `0.01` 已经偏负，下一步应该先降低 auxiliary loss 权重：
+因为 `0.001` 已经完成且偏负，继续沿当前 obs-CE 设计做更大 lambda sweep 的优先级很低：
 
 | 条件 | seeds | 当前状态 | 优先级 | 理由 |
 | --- | --- | --- | --- | --- |
-| `lambda_obs=0.001` | 0,1 | 尚未完成训练/eval | 最高 | 检查更弱 obs-CE regularization 是否能避免 `0.01` 的性能下降 |
+| `lambda_obs=0.001` | 0,1 | 训练完成，eval10x 完成，聚合 `0.5470 +/- 0.0665` | 已完成 | 更弱 obs-CE regularization 没有避免性能下降 |
 | `lambda_obs=0.03` | 0,1 | 早期训练到 step 15-21，未 eval | 低 | 已经不是基于当前结果的合理下一步，只能作为后续非单调性检查 |
 | `lambda_obs=0.05` | 0,1 | seed0 早期训练，seed1 排队卡住 | 低 | 同上，且当前排队进程还卡在 Ceph 数据预处理 |
 
-2026-07-01 的实时检查显示，排队的 `wm_obs_ce_l0p05_s1` 进程卡在：
-
-```text
-/root/grpo/venv/bin/python -m examples.data_preprocess.prepare --mode text --train_data_size 16 --val_data_size 128 --local_dir /root/data/verl-agent_wm_obs_ce_l0p05_s1
-```
-
-其 D-state wait channel 是 `d_alloc_parallel`，和更广泛的 Ceph metadata 卡顿一致。这个 job 即使恢复，也不应替代 `lambda_obs=0.001` 作为下一步主评测。
+`lambda_obs=0.001` 的两条训练和 eval10x 均通过 gpudev 本地盘路径完成，主要路径为 `/root/grpo/local_alfworld`，prepared data 使用 `/root/data/verl-agent_wm_obs_ce_l0p001_s0` 和 `/root/data/verl-agent_wm_obs_ce_l0p001_s1`。本次 eval10x 没有留下 launcher 子进程。
 
 ### A 的辅助诊断
 
@@ -124,41 +121,30 @@ obs-CE checkpoint 诊断可以作为 Workstream A 的辅助解释，但不应混
 
 - `grpo_baseline_s1` 和 `grpo_baseline_s2` 都已有 eval10x 和 checkpoint root，理论上可以跑 B 诊断。
 - 之前针对 `official_6to7` 和 `official_s2` 的诊断进程卡在 Ceph D-state。
-- 当前 live jobs 也无法推进，因为 Ceph 上的 data/model/repo 读取不可靠。
+- 如果继续从 Ceph 上读取 data/model/repo，诊断仍可能不可靠；后续应优先使用本地 staging 后的 model/repo/data 路径。
 
 ## 当前运行状态
 
-放宽 GPU 排队限制的改动已经推送；当显存和 `pmon` compute 都显示空闲时，可以使用原本分配给其他任务的 GPU pair。当前实时 GPU 状态是有利的：
+`lambda_obs=0.001` 的 eval10x 已全部结束：
 
-| GPU | 已用显存 MiB | 利用率 |
-| ---: | ---: | ---: |
-| 0 | 15615 | 0 |
-| 1 | 19245 | 0 |
-| 2 | 4 | 0 |
-| 3 | 4 | 0 |
-| 4 | 4 | 0 |
-| 5 | 4 | 0 |
-| 6 | 16055 | 0 |
-| 7 | 18029 | 0 |
+| run | eval10x 完成度 | mean | std | 状态 |
+| --- | ---: | ---: | ---: | --- |
+| `wm_obs_ce_l0p001_s0` | 10/10 | 0.4869 | 0.0188 | done |
+| `wm_obs_ce_l0p001_s1` | 10/10 | 0.6071 | 0.0309 | done |
+| 合并 20 次 eval | 20/20 | 0.5470 | 0.0665 | done |
 
-但是，剩余排队任务并没有真正开始训练：
-
-- `wmlat_l0p001_s1` 卡在 `examples.data_preprocess.prepare`，wait channel 是 `ceph_mdsc_wait_request`。
-- `wm_obs_ce_l0p05_s1` 卡在 `examples.data_preprocess.prepare`，wait channel 是 `d_alloc_parallel`。
-- 最近探测中，读取 Ceph repo/model 文件会超时，例如 `verl-agent/pyproject.toml` 和 `Qwen2.5-1.5B-Instruct/config.json`。
-
-已经新增了本地磁盘 runner：`scripts/gpudev_run_world_model_local.sh`，并同步到了 gpudev。但它还需要本地有一份 `Qwen2.5-1.5B-Instruct/model.safetensors`。目前 gpudev 和 cpudev2 的本地 cache 里都没有这个模型权重；从本机直接下载 Hugging Face 大文件也太慢且不稳定，暂时不能作为可靠 workaround。
+本地磁盘 runner 已经实际用于绕开 Ceph 路径问题：`scripts/gpudev_run_world_model_local.sh` 和 `scripts/eval10x_alfworld_local.sh` 已同步到 gpudev，训练/eval 使用 `/root/grpo/local_alfworld`、`/root/grpo/models/Qwen2.5-1.5B-Instruct` 和 `/root/data/...`。截至 2026-07-02 17:15 CST，两条 eval10x launcher 都已退出，无残留子进程。
 
 ## 判断
 
-Workstream A 在技术上已经跑通，但当前 `lambda_obs=0.01` 的科学结论是负向。下一步应优先做 `lambda_obs=0.001` 的 2-seed eval10x，而不是继续把 `0.03/0.05` 作为主线。
+Workstream A 在技术上已经跑通，但当前 `lambda_obs=0.01` 和 `lambda_obs=0.001` 的科学结论都是负向。`0.001` 的下降幅度更大，因此继续把 `0.03/0.05` 作为主线没有充分依据。
 
 Workstream B 应回到 baseline state trajectory：先补齐 GRPO baseline seed1/seed2 的 checkpoint diagnostics，再判断 vanilla GRPO 是否系统性改变 world-model 相关 state。当前 seed0 结果显示 cosine 增强，但 token CE 不稳定，且成功/失败分离信号不能靠单 seed 下结论。
 
 ## 建议下一步
 
-1. 恢复可靠的 model/repo 路径：要么修复 Ceph，要么把 `Qwen2.5-1.5B-Instruct` staging 到 gpudev 的 `/root/grpo/models` 下。
-2. 对 Workstream A，优先启动 `obs_ce_l0p001_s0/s1`，跑到 step 150 后做 eval10x。
-3. 暂时不要把 `obs_ce_l0p03_s0/s1`、`obs_ce_l0p05_s0/s1` 作为主线结论来源；它们可以保留为后续非单调性检查。
-4. 对 Workstream B，优先补跑 `grpo_baseline_s1/s2` 的 checkpoint/state diagnostics。
+1. 对 Workstream A，暂时停止把 obs-CE lambda sweep 作为主线；`0.01` 和 `0.001` 已经足够支持“当前设计负向”的结论。
+2. 如果仍要继续 A，应先做机制分析：为什么 obs-CE head 的 next-observation CE 能下降，但策略成功率下降；再考虑更改作用位置、annealing、loss normalization 或只在特定 token/span 上施加辅助目标。
+3. 暂时不要把 `obs_ce_l0p03_s0/s1`、`obs_ce_l0p05_s0/s1` 作为主线结论来源；它们最多保留为后续非单调性检查。
+4. 对 Workstream B，优先补跑 `grpo_baseline_s1/s2` 的 checkpoint/state diagnostics，使用本地 model/repo/data 路径规避 Ceph metadata 卡顿。
 5. 后续报告中明确区分三类数字：per-seed eval10x、multi-seed aggregate eval10x、online validation last/best。
