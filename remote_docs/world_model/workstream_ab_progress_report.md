@@ -148,3 +148,41 @@ Workstream B 应回到 baseline state trajectory：先补齐 GRPO baseline seed1
 3. 暂时不要把 `obs_ce_l0p03_s0/s1`、`obs_ce_l0p05_s0/s1` 作为主线结论来源；它们最多保留为后续非单调性检查。
 4. 对 Workstream B，优先补跑 `grpo_baseline_s1/s2` 的 checkpoint/state diagnostics，使用本地 model/repo/data 路径规避 Ceph metadata 卡顿。
 5. 后续报告中明确区分三类数字：per-seed eval10x、multi-seed aggregate eval10x、online validation last/best。
+
+## 2026-07-02 诊断深挖 + Workstream C 目标定型
+
+### action-observation cosine 是怎么算的（确认口径）
+`scripts/wm_score_transition_dump.py:596-633`：取 **最后一层** hidden（`hidden_states[-1]`），
+`action_hidden` = action-turn 结束位置（`prefix_len-1`），`obs_hidden` = next-obs 结束位置（`seq_len-1`），
+直接 `cos(action_hidden, obs_hidden)`。所有 checkpoint 用**同一批固定 transition**；报告里的
+`row_mean_action_obs_cosine` 是对所有 transition 的简单平均。**baseline 无 saved predictor →
+`action_obs_cosine == raw_action_obs_cosine`，即纯 raw hidden cosine，未经任何 predictor/projection。**
+
+### 成功/失败可分性（seed0 baseline，per-trajectory）
+诊断固定集来自 `wm_valdump_smoke_s0_step150`，实际只有 **8 条轨迹（3 成功 / 5 失败）**；
+"277 transition" 是因为失败轨迹跑满 50 步、成功轨迹 ~9 步。**样本量过小，不足以支撑可分性结论。**
+per-episode 平均 cosine（成功−失败 gap）随训练：init +0.0284 → 30 +0.0086 → 60 +0.0124 →
+90 +0.0072 → 120 +0.0070 → 150 +0.0062（gap 很小且**随训练收缩**）。step150 成功={0.683,0.693}
+被失败={0.641,0.685,0.692,0.692,0.698}完全覆盖 → **重叠、不可分**。GMM(2) 在 step150 cosine 上
+最优 cluster→label acc≈base rate → 分不开。cosine 随训练升高是**成功与失败几乎同步**
+（init→150：all +0.076 / success +0.062 / failure +0.077），**不是成功轨迹驱动**，是全局效应。
+其他指标（next-obs CE、target-confidence、hidden norm）在此样本上同样不可分（step150 CE gap +0.21
+由 1-2 条轨迹 + step150 CE 异常驱动，不可信）。**结论：需在大 dump（`world_model_rollouts/*/1.jsonl`
+约 6144 行 / 数百 episode）上重跑 B 诊断，才能对可分性下结论。**
+
+### Workstream C latent objective 定型：无 predictor 直接版
+按用户确认，C 线 latent loss 改为直接版，不经过任何 predictor / projection：
+```
+L_latent = 1 - cosine(h_action, stop_gradient(h_obs))
+```
+- 实现：`verl/workers/actor/dp_actor.py`。默认 `latent_use_predictor=False` → 不建 predictor，
+  直接对 action-end hidden 与 **stop-gradient 的** obs-end hidden 做 cosine；梯度只经 action 侧回传共享 Transformer。
+- posterior(obs 端)保持 `.detach()` 不变。已单测验证：grad@obs=0、grad@action>0。
+- collapse 监控：训练日志的 `world_model/latent_cosine`、`latent_action_norm`、`latent_obs_norm`、
+  `latent_action_feature_var`、`latent_obs_feature_var`（若 cosine 过快饱和到 1 或 feature_var→0 即预警）。
+
+### ⚠️ 代码分叉（需处理）
+- git 交付分支 `world-model-latent-objective` 的 latent 实现用 `world_model_predictor`（已提交的重构）。
+- **实际在跑的 cephfs `$WORK/verl-agent`（分支 `wm-cotrain-goal-rd`）用 `self.latent_predictor` + feature_var，是未提交的本地改动。**
+- 即：已产出的 λ=0.001 / λ=0.005 结果来自 cephfs 的 predictor 版；**pushed 仓库不复现这些 run**。
+- 无 predictor 改动已落到 git 交付分支;要让**未来的 run** 真正无 predictor，需同步到 cephfs 运行副本(未做,待定)。
