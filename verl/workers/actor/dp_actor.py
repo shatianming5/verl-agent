@@ -61,6 +61,7 @@ class DataParallelPPOActor(BasePPOActor):
         self.actor_optimizer = actor_optimizer
         self.world_model_predictor = None
         self.world_model_predictor_config = {}
+        self.latent_world_model_enabled = False
         self.world_model_loss_coef = 0.0
         self._last_world_model_grad_norm = None
 
@@ -115,6 +116,12 @@ class DataParallelPPOActor(BasePPOActor):
             return lambda_latent
         return float(world_model_config.get("latent_loss_coef", 0.0) or 0.0)
 
+    def _latent_use_predictor(self) -> bool:
+        """Whether to route the prior (action-end) hidden through a learned
+        LatentTransitionPredictor before the cosine loss. Default False: the
+        Workstream C objective is the direct L_latent = 1 - cos(h_action, sg(h_obs))."""
+        return bool(self._world_model_config().get("latent_use_predictor", False))
+
     def _broadcast_world_model_parameters(self):
         if self.world_model_predictor is None:
             return
@@ -130,6 +137,12 @@ class DataParallelPPOActor(BasePPOActor):
             return
         if self.use_ulysses_sp:
             raise ValueError("actor.world_model latent loss is not supported with actor Ulysses sequence parallelism yet.")
+
+        self.latent_world_model_enabled = True
+        if not self._latent_use_predictor():
+            # Default Workstream C objective: L_latent = 1 - cos(h_action, stop_gradient(h_obs)).
+            # No predictor / projection head; gradient flows action_hidden -> shared transformer.
+            return
 
         hidden_size = self._infer_hidden_size()
         predictor_hidden_size = world_model_config.get("predictor_hidden_size", None)
@@ -226,7 +239,7 @@ class DataParallelPPOActor(BasePPOActor):
         return optimizer_state_dict
 
     def _has_latent_world_model_batch(self, micro_batch) -> bool:
-        if self.world_model_predictor is None:
+        if not self.latent_world_model_enabled:
             return False
         legacy_keys = [
             "wm_input_ids",
@@ -353,7 +366,11 @@ class DataParallelPPOActor(BasePPOActor):
             max_idx = hidden_states.size(1) - 1
             action_hidden = hidden_states[batch_idx, wm_action_end_idx.clamp(min=0, max=max_idx)]
             obs_hidden = hidden_states[batch_idx, wm_obs_end_idx.clamp(min=0, max=max_idx)].detach()
-            pred_hidden = self.world_model_predictor(action_hidden)
+            if self.world_model_predictor is not None:
+                pred_hidden = self.world_model_predictor(action_hidden)
+            else:
+                # Default Workstream C: direct cosine on the action-end hidden, no predictor.
+                pred_hidden = action_hidden
 
         cosine = F.cosine_similarity(pred_hidden.float(), obs_hidden.float(), dim=-1)
         per_sample_loss = 1.0 - cosine
