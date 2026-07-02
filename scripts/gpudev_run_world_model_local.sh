@@ -76,8 +76,6 @@ case "$KIND" in
     LATENT_PREDICTOR_HIDDEN_SIZE=${LATENT_PREDICTOR_HIDDEN_SIZE:-0}
     LATENT_PREDICTOR_DROPOUT=${LATENT_PREDICTOR_DROPOUT:-0.0}
     WM_ARGS+=(
-      actor_rollout_ref.actor.world_model.obs_ce_enable=False
-      actor_rollout_ref.actor.world_model.latent_enable=True
       actor_rollout_ref.actor.world_model.lambda_latent="$VALUE"
       actor_rollout_ref.actor.world_model.latent_max_length="$LATENT_MAX_LENGTH"
       actor_rollout_ref.actor.world_model.latent_target="$LATENT_TARGET"
@@ -90,7 +88,6 @@ case "$KIND" in
     OBS_CE_MAX_LENGTH=${OBS_CE_MAX_LENGTH:-512}
     OBS_CE_TARGET=${OBS_CE_TARGET:-text}
     WM_ARGS+=(
-      actor_rollout_ref.actor.world_model.obs_ce_enable=True
       actor_rollout_ref.actor.world_model.lambda_obs="$VALUE"
       actor_rollout_ref.actor.world_model.obs_ce_coef="$VALUE"
       actor_rollout_ref.actor.world_model.obs_ce_max_length="$OBS_CE_MAX_LENGTH"
@@ -133,8 +130,12 @@ DATA_DIR=/root/data/verl-agent_${TAG}
 
 echo "RUN_WM_LOCAL kind=$KIND seed=$SEED tag=$TAG cuda=$CUDA_VISIBLE_DEVICES value=$VALUE work=$WORK model=$MODEL ckpt=$CKPT_DIR rollout_data_dir=$ROLLOUT_DATA_DIR"
 
-"$VENV/bin/python" -m examples.data_preprocess.prepare \
-  --mode text --train_data_size "$TRAIN_DATA_SIZE" --val_data_size "$VAL_DATA_SIZE" --local_dir "$DATA_DIR"
+if [[ -s "$DATA_DIR/text/train.parquet" && -s "$DATA_DIR/text/test.parquet" ]]; then
+  echo "REUSE_PREPARED_DATA data_dir=$DATA_DIR"
+else
+  "$VENV/bin/python" -m examples.data_preprocess.prepare \
+    --mode text --train_data_size "$TRAIN_DATA_SIZE" --val_data_size "$VAL_DATA_SIZE" --local_dir "$DATA_DIR"
+fi
 
 disable_proxy_for_ray
 
