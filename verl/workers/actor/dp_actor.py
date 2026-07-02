@@ -372,19 +372,58 @@ class DataParallelPPOActor(BasePPOActor):
                 # Default Workstream C: direct cosine on the action-end hidden, no predictor.
                 pred_hidden = action_hidden
 
-        cosine = F.cosine_similarity(pred_hidden.float(), obs_hidden.float(), dim=-1)
-        per_sample_loss = 1.0 - cosine
-        latent_loss = torch.sum(per_sample_loss * wm_loss_mask) / valid_count.clamp_min(1.0)
+        wm_cfg = self._world_model_config()
+        use_contrastive = bool(wm_cfg.get("latent_contrastive", False))
+        valid = wm_loss_mask.bool()
+        pos_cos = neg_cos = None
+        if use_contrastive:
+            # InfoNCE: pull each action-end hidden toward its OWN next-obs hidden and push away
+            # from other transitions' next-obs (in-batch negatives). ALFWorld observations share
+            # ~91% tokens (static task/template), so that common-mode signal is shared by positives
+            # and negatives and cancels here, forcing the representation to encode the action-specific
+            # consequence rather than the shortcut of task/state identity. No predictor; obs stop-grad.
+            tau = float(wm_cfg.get("latent_temperature", 0.1) or 0.1)
+            anchor = pred_hidden.float()[valid]
+            target = obs_hidden.float()[valid]
+            # Remove the batch common-mode (the ~static observation template) before comparing,
+            # otherwise the shared component swamps the per-transition consequence even after
+            # L2-normalization (verified empirically). Centering is what makes InfoNCE discriminative.
+            anchor = anchor - anchor.mean(dim=0, keepdim=True)
+            target = target - target.mean(dim=0, keepdim=True)
+            anchor = F.normalize(anchor, dim=-1)
+            target = F.normalize(target, dim=-1)
+            n = anchor.size(0)
+            if n >= 2:
+                logits = anchor @ target.t() / tau
+                labels = torch.arange(n, device=logits.device)
+                latent_loss = F.cross_entropy(logits, labels)
+                with torch.no_grad():
+                    sim = anchor @ target.t()
+                    pos_cos = sim.diag().mean()
+                    neg_cos = (sim.sum() - sim.diag().sum()) / (n * (n - 1))
+            elif n == 1:
+                latent_loss = (1.0 - (anchor * target).sum(dim=-1)).mean()
+            else:
+                latent_loss = pred_hidden.float().sum() * 0.0
+        else:
+            cosine = F.cosine_similarity(pred_hidden.float(), obs_hidden.float(), dim=-1)
+            per_sample_loss = 1.0 - cosine
+            latent_loss = torch.sum(per_sample_loss * wm_loss_mask) / valid_count.clamp_min(1.0)
 
         with torch.no_grad():
-            valid = wm_loss_mask.bool()
+            plain_cos = F.cosine_similarity(pred_hidden.float(), obs_hidden.float(), dim=-1)
+            any_valid = bool(valid.any().item())
             metrics = {
                 "actor/wm_latent_loss": latent_loss.detach().item(),
-                "actor/wm_cosine": cosine[valid].mean().detach().item(),
+                "actor/wm_cosine": plain_cos[valid].mean().detach().item() if any_valid else 0.0,
                 "actor/wm_valid": valid_count.detach().item(),
-                "actor/wm_pred_norm": pred_hidden.float()[valid].norm(dim=-1).mean().detach().item(),
-                "actor/wm_target_norm": obs_hidden.float()[valid].norm(dim=-1).mean().detach().item(),
+                "actor/wm_pred_norm": pred_hidden.float()[valid].norm(dim=-1).mean().detach().item() if any_valid else 0.0,
+                "actor/wm_target_norm": obs_hidden.float()[valid].norm(dim=-1).mean().detach().item() if any_valid else 0.0,
             }
+            if use_contrastive and pos_cos is not None:
+                metrics["actor/wm_pos_cosine"] = pos_cos.item()
+                metrics["actor/wm_neg_cosine"] = neg_cos.item()
+                metrics["actor/wm_gap"] = (pos_cos - neg_cos).item()
         return latent_loss, metrics
 
     def _sync_world_model_gradients(self):
