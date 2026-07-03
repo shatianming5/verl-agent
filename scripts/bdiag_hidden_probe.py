@@ -48,20 +48,85 @@ def extract_hiddens(model, encoded, device, batch_size, max_n):
     return np.asarray(A, np.float32), np.asarray(O, np.float32), np.asarray(y, np.int64)
 
 
+def _rankdata(a):
+    """Ranks with ties averaged (scipy.stats.rankdata equivalent), pure numpy."""
+    order = np.argsort(a, kind="mergesort")
+    ranks = np.empty(len(a), dtype=np.float64)
+    ranks[order] = np.arange(1, len(a) + 1)
+    sa = a[order]
+    i = 0
+    while i < len(a):
+        j = i
+        while j + 1 < len(a) and sa[j + 1] == sa[i]:
+            j += 1
+        if j > i:
+            avg = (i + 1 + j + 1) / 2.0
+            ranks[order[i:j + 1]] = avg
+        i = j + 1
+    return ranks
+
+
+def _auc(scores, y):
+    """ROC-AUC via the Mann-Whitney U rank statistic (handles ties)."""
+    npos = int(y.sum()); nneg = int(len(y) - npos)
+    if npos == 0 or nneg == 0:
+        return float("nan")
+    ranks = _rankdata(scores)
+    return float((ranks[y == 1].sum() - npos * (npos + 1) / 2.0) / (npos * nneg))
+
+
+def _fit_logreg_torch(X, y, C=1.0, epochs=400, lr=0.05):
+    """L2-regularised logistic regression via Adam (sklearn-free). CPU torch."""
+    import torch
+    Xt = torch.tensor(X, dtype=torch.float32); yt = torch.tensor(y, dtype=torch.float32)
+    n, d = Xt.shape
+    w = torch.zeros(d, requires_grad=True); b = torch.zeros(1, requires_grad=True)
+    opt = torch.optim.Adam([w, b], lr=lr)
+    l2 = 1.0 / (C * n)
+    for _ in range(epochs):
+        opt.zero_grad()
+        z = Xt @ w + b
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(z, yt) + l2 * (w * w).sum()
+        loss.backward(); opt.step()
+    return w.detach().numpy(), float(b.detach().numpy()[0])
+
+
+def _stratified_folds(y, k, seed):
+    rng = np.random.default_rng(seed)
+    folds = [[] for _ in range(k)]
+    for cls in (0, 1):
+        idx = np.where(y == cls)[0]; rng.shuffle(idx)
+        for i, ix in enumerate(idx):
+            folds[i % k].append(int(ix))
+    return [np.array(sorted(f), dtype=np.int64) for f in folds]
+
+
+def _cv_auc(X, y, k=5, seed=0):
+    folds = _stratified_folds(y, k, seed)
+    aucs = []
+    for i in range(k):
+        te = folds[i]
+        tr = np.concatenate([folds[j] for j in range(k) if j != i])
+        mu = X[tr].mean(0, keepdims=True); sd = X[tr].std(0, keepdims=True) + 1e-6
+        Xtr = (X[tr] - mu) / sd; Xte = (X[te] - mu) / sd
+        w, b = _fit_logreg_torch(Xtr, y[tr].astype(np.float32))
+        a = _auc(Xte @ w + b, y[te])
+        if not np.isnan(a):
+            aucs.append(a)
+    return float(np.mean(aucs)) if aucs else float("nan")
+
+
 def probe(X, y, seed=0):
-    """5-fold CV ROC-AUC of an L2 logistic probe; plus label-shuffled chance."""
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.model_selection import cross_val_score, StratifiedKFold
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.pipeline import make_pipeline
+    """5-fold CV ROC-AUC of an L2 logistic probe; plus label-shuffled chance.
+
+    sklearn-free: standardization + torch logistic regression + rank-based AUC.
+    """
     if len(set(y.tolist())) < 2 or min(np.bincount(y)) < 5:
         return (float("nan"), float("nan"), int(y.sum()), int(len(y) - y.sum()))
-    clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, C=1.0))
-    cv = StratifiedKFold(5, shuffle=True, random_state=seed)
-    auc = cross_val_score(clf, X, y, cv=cv, scoring="roc_auc").mean()
+    auc = _cv_auc(X, y, seed=seed)
     rng = np.random.default_rng(seed)
     ysh = y.copy(); rng.shuffle(ysh)
-    auc_sh = cross_val_score(clf, X, ysh, cv=cv, scoring="roc_auc").mean()
+    auc_sh = _cv_auc(X, ysh, seed=seed)
     return (float(auc), float(auc_sh), int(y.sum()), int(len(y) - y.sum()))
 
 
