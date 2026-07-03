@@ -116,21 +116,37 @@ def auc(vals, labels):
     return float(np.mean([(p > ng).mean() + 0.5 * (p == ng).mean() for p in ps]))
 
 
+def _gmm1d_em(v, n_iter=200, seed=0):
+    """1-D 2-component Gaussian mixture via EM (sklearn-free). Returns hard labels + means."""
+    v = np.asarray(v, float).ravel()
+    mu = np.array([np.quantile(v, 0.25), np.quantile(v, 0.75)], float)
+    if mu[0] == mu[1]:
+        mu = np.array([v.min(), v.max()], float)
+    var = np.array([v.var() + 1e-6] * 2, float)
+    w = np.array([0.5, 0.5])
+    r = np.full((len(v), 2), 0.5)
+    for _ in range(n_iter):
+        g = np.stack([w[k] * np.exp(-0.5 * (v - mu[k]) ** 2 / var[k]) / np.sqrt(2 * np.pi * var[k])
+                      for k in range(2)], axis=1)
+        gs = g.sum(1, keepdims=True); gs[gs == 0] = 1e-12
+        r = g / gs
+        Nk = r.sum(0) + 1e-12
+        mu = (r * v[:, None]).sum(0) / Nk
+        var = (r * (v[:, None] - mu[None, :]) ** 2).sum(0) / Nk + 1e-6
+        w = Nk / len(v)
+    return r.argmax(1), mu
+
+
 def gmm_separability(vals, labels):
-    """2-component GMM on a metric; best cluster->label accuracy vs base rate."""
-    try:
-        from sklearn.mixture import GaussianMixture
-    except Exception:
-        return None
-    v = np.asarray([x for x in vals if x is not None], float).reshape(-1, 1)
+    """2-component GMM on a metric; best cluster->label accuracy vs base rate. Pure numpy EM."""
+    v = np.asarray([x for x in vals if x is not None], float)
     lab = np.asarray([labels[i] for i, x in enumerate(vals) if x is not None])
     if len(v) < 10 or len(set(lab.tolist())) < 2:
         return None
-    gm = GaussianMixture(2, random_state=0).fit(v)
-    pred = gm.predict(v)
+    pred, mu = _gmm1d_em(v)
     acc = max(((np.where(pred == 0, p0, p1)) == lab).mean() for p0, p1 in [(0, 1), (1, 0)])
     return {"gmm_acc": float(acc), "base_rate": float(max(lab.mean(), 1 - lab.mean())),
-            "means": gm.means_.ravel().round(4).tolist()}
+            "means": [round(float(m), 4) for m in mu]}
 
 
 def main():
