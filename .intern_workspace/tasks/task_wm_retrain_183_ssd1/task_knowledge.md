@@ -1,8 +1,12 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=0 -->
+<!-- METADATA:SESSION=1 -->
 
 ## Knowledge Entries
+
+0. **gdpo env 补齐清单**（.183，纯增量 pip，dry-run 均确认不动 torch/vllm/transformers）：`torchdata alfworld cachetools gymnasium peft`。补齐后 main_ppo+peft+alfworld env 全链 import OK。
+1. **HF 不可达**：huggingface.co timeout；`hf-mirror.com` 可达。prepare.py 的 geometry3k 只用于指示 modality+size、内容不用 → text parquet 可直接按 schema 生成绕过 HF。
+2. **ALFWorld 数据下载**：源=github releases（可达）；`alfworld-download` 默认 temp=/tmp/alfworld 常被他人占用 → 必须 `export TMPDIR=<可写路径>`。
 
 1. **.183 落盘限制**：`/mnt/SSD1_8TB` 根目录属 root，zechuan 账号只能写 `/mnt/SSD1_8TB/zechuan/` 子目录。
 2. **可复用 env**：`gdpo`(verl+flash_attn2.8.3+vllm dev, torch2.4/cu121)、`goodhart`(verl)、`autorl`(alfworld+vllm0.18)。用 `PYTHONPATH=$REPO` 覆盖为本仓库 verl。

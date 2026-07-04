@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=0 -->
+<!-- METADATA:SESSION=1 -->
+
+## Session 1 - 冒烟真正跑起来 + 持续监督
+
+- 冒烟第 3 次（peft 补齐后）**越过全部依赖问题**：模型加载成功（Qwen2ForCausalLM 1.54B params）、FSDP wrap、Total steps=6、wandb offline 起、GPU 7,8 各 33GB/100% util 在算，进到 `val_before_train` 首次 rollout。
+- `vllm._version` 仅无害 warning，非报错。
+- 主管指令"持续监督"：挂 persistent monitor（be05pg3pm）盯到冒烟完成（WM_183_DONE / 存 checkpoint）或报错。
+- 依赖补齐总账（gdpo env 纯增量、dry-run 确认不动 torch/vllm）：torchdata、alfworld、cachetools、gymnasium、peft。
 
 ## Session 0 - 2026-07-05 创建 + 启动
 
