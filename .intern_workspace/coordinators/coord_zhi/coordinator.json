@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "scope": "user",
+  "role": "coordinator",
+  "coordinator_id": "coord_zhi",
+  "intern_name": "intern_zhi",
+  "owner": {
+    "type": "feishu_owner",
+    "mobile": "13302824116",
+    "open_id": "ou_d02feba58e06da2b0399d63028f215ca",
+    "display_name": "沙天铭"
+  },
+  "anchor": {
+    "project": "Haotian",
+    "repo_path": "/Users/tommy/work-agents/state/v1/ws_haotian/interns/intern_zhi/Haotian",
+    "metadata_path": "coordinators/coord_zhi/coordinator.json"
+  },
+  "standing_goal": {
+    "enabled": true,
+    "objective": "持续承接用户需求，创建和管理 team_lead，跨 workspace 分配任务并跟进结果。",
+    "policy": "never_idle_unless_user_stops"
+  },
+  "coordinator_task": {
+    "task_id": "task_coordinator_zhi_168b3bdd",
+    "status": "InProgress",
+    "lifecycle": "exists_while_coordinator_exists",
+    "completion_policy": "never_complete_while_coordinator_exists"
+  },
+  "managed_workspaces": [],
+  "team_leads": [],
+  "created_at": "2026-07-04T17:15:51Z",
+  "updated_at": "2026-07-04T17:15:51Z"
+}
