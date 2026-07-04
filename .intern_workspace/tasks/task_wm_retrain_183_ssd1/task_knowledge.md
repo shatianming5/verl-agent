@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=4 -->
+<!-- METADATA:SESSION=5 -->
 
 ## Knowledge Entries
 
@@ -21,3 +21,4 @@
 11. **权重管理方案（待主管定稿，full 前置）**：(a) `max_actor_ckpt_to_keep=3` 只留最近 3 个滚动；(b) 每次落 ckpt 后 rsync 到异地（我本地 or 另一台机）做备份，破单盘单点；(c) critic 知识无关不用配。理由：本任务正因 cephfs 单点丢权重而生，full=null+单盘=同构复现风险。
 12. **权重管理 diff 已备**（本地分支 `intern_123/wm183-weight-mgmt`，基于任务分支）：脚本加 `MAX_ACTOR_CKPT_TO_KEEP`(默认3)+`CKPT_BACKUP_DEST`(默认空/关)，`bash -n` 过。**未开 PR/未 merge**，等冒烟绿 + 主管批准。
 13. **备份设计未决点（主管拍板）**：现 diff 的 rsync 是**跑完后**镜像，只保完成态，**不防跑中掉盘**（正是 cephfs 威胁模型）。真正抗单点需**跑中逐 ckpt 备份**（后台 watcher 盯 `global_step_*` 落盘即 rsync，或 verl callback）+ 备份目的地（我本地/另一台机）。此为架构选择，待主管定。
+14. **诊断法：日志静默 ≠ 卡死**。verl 按 step 边界攒着 flush，val 之后到首个 step 落地可长时间无新日志。判"真算 vs 死锁"硬证据：对 GPU worker pid 读 `/proc/<pid>/stat` 第 14+15 字段(utime+stime)间隔 ~12s 双采样，增长≈满核 tick 即真算；配合 GPU util 持续高、进程状态 `R`。别只看日志 mtime 下结论。

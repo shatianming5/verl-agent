@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=4 -->
+<!-- METADATA:SESSION=5 -->
+
+## Session 5 - 2026-07-05 冒烟穿越 update_actor 门槛中（CPU 双采样确认真算）
+
+- 复核发现日志 mtime 卡 05:12 十几分钟没动，但 GPU 4,5 回到 33GB/100%、worker 状态 `R`、CPU 时间已累计 58min。
+- **硬证据判定真算非死锁**：worker(2365587/2366278) CPU 时间 12s 内各涨 ~1200 tick(≈满核)，GPU 持续 93-97% → 确凿在计算。日志静默是 verl 按 step 边界攒着 flush 的特性，非停滞。
+- 阶段判断：val 之后、首个 `update_actor` 重计算中(FSDP 反向+优化器长时间不吐日志，GPU 满载吻合)——很可能正穿越 launch3 崩掉的 OOM 门槛，**至今未崩**（最好信号，但"未崩"≠"通过"，要等 step1 loss 或 step3 存 ckpt）。
+- 补监控死角：原 Monitor 只 tail 日志，静默期若 OOM 进程消失但日志未必即写错误 → 加挂**进程存活哨兵**(bgtw5uquk)，main_ppo 消失即报 + 打 exit tail/ckpt 状态。现双监控：日志(bulben2q6)+进程(bgtw5uquk)。
 
 ## Session 4 - 2026-07-05 冒烟越过 val 生成阶段（换卡后进展）
 
