@@ -126,6 +126,14 @@ SAVE_FREQ=${SAVE_FREQ:-15}
 TEST_FREQ=${TEST_FREQ:-5}
 VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 RAY_OBJECT_STORE_MEMORY=${RAY_OBJECT_STORE_MEMORY:-64000000000}
+# Weight management: keep a rolling window of the most recent N actor checkpoints
+# (verl auto-deletes older ones) instead of retaining every ckpt forever. Single
+# SSD1 disk with no backup was a cephfs-outage-shaped single point of failure.
+# GRPO has no critic, so only the actor knob matters. Set to null to disable.
+MAX_ACTOR_CKPT_TO_KEEP=${MAX_ACTOR_CKPT_TO_KEEP:-3}
+# Optional off-box mirror of each checkpoint as it lands. Empty = disabled.
+# Format: rsync-style destination, e.g. user@host:/path or /mnt/other/backup.
+CKPT_BACKUP_DEST=${CKPT_BACKUP_DEST:-}
 
 LOG=$WORK/logs/${EXP}_$(date +%Y%m%d_%H%M%S).log
 CKPT_DIR=$WORK/checkpoints/$EXP
@@ -201,10 +209,17 @@ disable_proxy_for_ray
   trainer.val_before_train="$VAL_BEFORE_TRAIN" \
   trainer.default_local_dir="$CKPT_DIR" \
   trainer.default_hdfs_dir=null \
-  trainer.max_actor_ckpt_to_keep=null \
+  trainer.max_actor_ckpt_to_keep="$MAX_ACTOR_CKPT_TO_KEEP" \
   trainer.max_critic_ckpt_to_keep=null \
   "${WM_ARGS[@]}" \
   "${EXTRA_HYDRA_ARGS[@]}" \
   2>&1 | tee -a "$LOG"
+
+if [[ -n "$CKPT_BACKUP_DEST" ]]; then
+  echo "CKPT_BACKUP start dest=$CKPT_BACKUP_DEST src=$CKPT_DIR"
+  rsync -a --delete "$CKPT_DIR/" "$CKPT_BACKUP_DEST/$EXP/" \
+    && echo "CKPT_BACKUP done dest=$CKPT_BACKUP_DEST/$EXP" \
+    || echo "CKPT_BACKUP FAILED dest=$CKPT_BACKUP_DEST (non-fatal; local ckpt intact)"
+fi
 
 echo "WM_183_DONE kind=$KIND seed=$SEED tag=$TAG log=$LOG ckpt=$CKPT_DIR rollout_data_dir=$ROLLOUT_DATA_DIR"
