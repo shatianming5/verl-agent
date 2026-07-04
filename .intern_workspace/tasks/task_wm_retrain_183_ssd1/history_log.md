@@ -2,6 +2,17 @@
 
 <!-- METADATA:SESSION=5 -->
 
+## Session 5b - 2026-07-05 06:0x 冒烟二次 OOM → 三管齐下显存修复（已推 GitHub）+ SSH 阻塞
+
+- **冒烟 launch4 二次 OOM**：又崩在首个 `update_actor` 的 FSDP 反向传播(`_engine_run_backward`)。错误信息精确:单卡 47.38GB，jusheng 邻居占 ~11GB，我进程峰值 ~32GB + 反向要 4.8-5GB → 只剩 3.4-4.2GB 不够，且 ~10GB 是 reserved-but-unallocated 碎片。
+- **根因定性**：结构性显存不足，**换卡救不了**（每张卡都有 jusheng ~11GB）。报错本身建议 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`。
+- **三管齐下修复**（commit a09ca61，已 push 分支 `intern_123/wm183-weight-mgmt`，bash -n 过）：(1) `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 消碎片；(2) `optimizer_offload=True` Adam 状态~6GB 卸 CPU；(3) `GMU 0.45→0.30` 缩 vLLM KV 预留。峰值 ~37GB→~24-26GB。全部 env 可覆盖，慢但冒烟仅 6 epoch 无所谓。
+- **清理**：两次崩溃残留已 kill + `ray stop --force`，GPU 4,5 降回 jusheng ~11.4GB 基线。
+- **GitHub push 认证修复**：push 一度 `could not read Username` → `gh auth setup-git` 修好；清理 .git/objects/pack 内 AppleDouble(`._*`)垃圾。
+- ⛔ **硬阻塞（需主管介入）**：SSH 到 .183(`zechuan@1.14.177.180`)认证失效 `Permission denied(publickey,password)`。本 session 之前靠现已消失的认证态；`~/.ssh/id_ed25519`(今 06:05 新生成)公钥未在 .183 authorized_keys，ssh-agent 未运行，无密码/有效私钥。**无法部署脚本、无法重启冒烟**。GitHub token 对 SSH 无效，未拿去试。
+- **安全**：主管明文发的 GitHub token 未落盘/未写 config，已提示其吊销轮换。
+- 待恢复访问方式：把公钥 `ssh-ed25519 AAAAC3...NUF+sl server3-47.116.12.95` 加到 .183 ~zechuan/.ssh/authorized_keys，或给旧私钥路径。
+
 ## Session 5 - 2026-07-05 冒烟穿越 update_actor 门槛中（CPU 双采样确认真算）
 
 - 复核发现日志 mtime 卡 05:12 十几分钟没动，但 GPU 4,5 回到 33GB/100%、worker 状态 `R`、CPU 时间已累计 58min。

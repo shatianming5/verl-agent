@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working |
+| Status | Working（阻塞：SSH 到 .183 失效，待主管恢复访问） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
