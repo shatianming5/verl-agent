@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=1 -->
+<!-- METADATA:SESSION=2 -->
+
+## Session 2 - 持续监督:冒烟健康跑 val_before_train
+
+- 复核冒烟进度：进程存活 42min，2 个 `ray::WorkerDict`(FSDP actor)~95% CPU + 多个 `ray::AlfworldWo` env worker 在跑；GPU 7,8 util 91-98% 波动、显存 15-33GB 随 rollout/prefill 起落 = 真算非卡死。
+- 一度日志 14min 无新增，排查确认是 verl 按 step flush 进度条 + 首次验证 rollout（128 游戏×≤50 步、TP=2 4090D）本就慢，非卡住；已到 `Training Progress: 0/6` + `Initializing AlfredTWEnv`。
+- 无报错/OOM/NaN；持续监督 monitor（be05pg3pm）在盯，首个 val/step/checkpoint 或报错即通知。
+- 教训修正：上次读 CPU 时间读的是父启动器 PID（19s），真正在算的是 ray worker（各 39min CPU）。
 
 ## Session 1 - 冒烟真正跑起来 + 持续监督
 
