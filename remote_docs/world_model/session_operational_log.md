@@ -1,6 +1,6 @@
-# Operational tick-log (session running log)
+# 操作 tick 日志（会话运行日志)
 
-_Copied from session plan.md at outage snapshot 2026-07-04. Full decision + monitoring history._
+_故障快照 2026-07-04 时从会话 plan.md 复制。完整的决策 + 监控历史（中英混排的工作日志,技术缩写如 done/watch/GPU/step 保留原样)。_
 
 # 继承 codex session 019f0fb4 — ALFWorld World-Model Co-Training
 
