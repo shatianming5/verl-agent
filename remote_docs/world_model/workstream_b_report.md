@@ -79,7 +79,7 @@
 
 ## 5. 对 Workstream A / C 的决策含义
 - C 线 no-predictor latent 目标优化的是 **action-obs cosine** —— 在这里它**与成功无关、也不随训练增长**。提高它未必助任务成功;直接看 eval,别把 latent 指标当成功代理。
-- 最小化 **next-obs CE**(Workstream A obs-CE 协同训练)把模型推向*更低*的 obs 意外度,但在这批数据里**成功恰恰伴随更高的 obs 意外度(novelty/推进)。** 天真的 CE-min 辅助有奖励"重复、不推进"行为的风险 —— 这是需要标出的真实隐患,也与 obs_ce 变体至今低于基线(0.547 / 0.671 vs **0.7065**)一致。
+- 最小化 **next-obs CE**(Workstream A obs-CE 协同训练)把模型推向*更低*的 obs 意外度,但在这批数据里**成功恰恰伴随更高的 obs 意外度(novelty/推进)。** 天真的 CE-min 辅助有奖励"重复、不推进"行为的风险 —— 这是需要标出的真实隐患。obs_ce 变体的 2-seed 聚合至今都低于基线(λ=0.001→0.547,λ=0.01→0.671,vs **0.7065**),但关系**非单调**(λ=0.01 优于 0.001,且其 seed0=0.731 已略超基线),seed 方差大,应补 seed 再定论,而非视作已被证伪。
 - 最强的成功信号在 **hidden state** 里、且 init 就存在。*塑造/暴露*这个已有表征的目标,可能比 next-obs 预测目标更有前途。
 
 ## 6. 产物（全部在 `remote_docs/world_model/bdiag_official_4to5/`)
