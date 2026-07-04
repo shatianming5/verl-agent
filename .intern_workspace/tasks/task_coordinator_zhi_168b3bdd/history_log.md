@@ -10,4 +10,4 @@
 
 - 收到用户精确回复要求 `ZHI_V3`。
 - 按 coordinator 生命周期规则保持任务 `InProgress`/`Working`，未创建 team_lead，未分配额外 workspace。
-- 更新 status、history 和 task knowledge 的 Session 记录，准备在工作分支提交并 push。
+- 更新 status、history 和 task knowledge 的 Session 记录；本地 HTTPS push 失败后，通过 GitHub connector 发布到工作分支。
