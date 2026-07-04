@@ -33,6 +33,9 @@ export PYTHONPATH=$REPO:${PYTHONPATH:-}
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export TORCHDYNAMO_DISABLE=1
 export TORCH_COMPILE_DISABLE=1
+# Defragment CUDA allocator: reclaims the ~10GB reserved-but-unallocated blocks
+# that caused OOM in the actor-update backward pass when sharing cards with jusheng.
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export VERL_DISABLE_FLASH_ATTN_CE=${VERL_DISABLE_FLASH_ATTN_CE:-1}
 export HYDRA_FULL_ERROR=1
 export TOKENIZERS_PARALLELISM=false
@@ -120,7 +123,12 @@ PPO_MINI=${PPO_MINI:-256}
 PPO_MICRO=${PPO_MICRO:-16}
 LOGPROB_MICRO=${LOGPROB_MICRO:-16}
 REF_MICRO=${REF_MICRO:-16}
-GMU=${GMU:-0.45}
+# GMU 0.30 (was 0.45): shrink vLLM KV-cache reservation so the actor-update
+# backward pass has headroom when sharing 49GB cards with jusheng (~11GB neighbor).
+GMU=${GMU:-0.30}
+# Offload optimizer state (Adam moments, ~6GB) to CPU during actor update — the
+# backward-pass peak is what OOM'd on cards 4,5. param stays on GPU for speed.
+OPTIMIZER_OFFLOAD=${OPTIMIZER_OFFLOAD:-True}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-150}
 SAVE_FREQ=${SAVE_FREQ:-15}
 TEST_FREQ=${TEST_FREQ:-5}
@@ -141,7 +149,7 @@ mkdir -p "$CKPT_DIR"
 printf '%s\n' "$RAY_TMPDIR" > "$WORK/logs/${EXP}_ray_tmpdir.txt"
 DATA_DIR=${DATA_DIR:-$WORK/data/verl-agent_wmretrain}
 
-echo "RUN_WM_183 kind=$KIND seed=$SEED tag=$TAG cuda=$CUDA_VISIBLE_DEVICES value=$VALUE work=$WORK model=$MODEL ckpt=$CKPT_DIR rollout_data_dir=$ROLLOUT_DATA_DIR epochs=$TOTAL_EPOCHS gmu=$GMU"
+echo "RUN_WM_183 kind=$KIND seed=$SEED tag=$TAG cuda=$CUDA_VISIBLE_DEVICES value=$VALUE work=$WORK model=$MODEL ckpt=$CKPT_DIR rollout_data_dir=$ROLLOUT_DATA_DIR epochs=$TOTAL_EPOCHS gmu=$GMU opt_offload=$OPTIMIZER_OFFLOAD alloc_conf=$PYTORCH_CUDA_ALLOC_CONF"
 
 if [[ -s "$DATA_DIR/text/train.parquet" && -s "$DATA_DIR/text/test.parquet" ]]; then
   echo "REUSE_PREPARED_DATA data_dir=$DATA_DIR"
@@ -176,7 +184,7 @@ disable_proxy_for_ray
   actor_rollout_ref.actor.kl_loss_type=low_var_kl \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   actor_rollout_ref.actor.fsdp_config.param_offload=False \
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload="$OPTIMIZER_OFFLOAD" \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu="$LOGPROB_MICRO" \
   actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
   actor_rollout_ref.rollout.name=vllm \
