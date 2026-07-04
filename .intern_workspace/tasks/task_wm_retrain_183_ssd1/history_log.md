@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=3 -->
+<!-- METADATA:SESSION=4 -->
+
+## Session 4 - 2026-07-05 冒烟越过 val 生成阶段（换卡后进展）
+
+- Monitor 报 `validation generation end`：冒烟(卡 4,5)越过最慢的 val rollout 阶段，比 launch3 走得更远，**至此无 OOM/Traceback**。
+- 实况核实：进程存活(pid 2346099/2346116)，GPU 4,5 仍 93-94% 真算；显存从 33GB 降到 ~20GB = val 的 vLLM KV cache 已释放(`free_cache_engine=True`)，进入 val 之后、`update_actor` 之前的 log_prob 准备阶段。
+- 当前卡点判断：`validation generation end` 已出但 `Initial validation metrics` 未打，日志刷 ALFWorld `dresser 1 is not closed`(游戏引擎噪声非错误)，静默 ~6min = val 尾声最后几个 env 收尾，符合正常慢，非故障。
+- ⚠️ 尚未到能松口气的点：launch3 正是在 val 之后的首个 `update_actor` 才 OOM。Monitor(bulben2q6, persistent)仍武装，盯 metrics/update_actor/OOM/ckpt。
+- 权重管理 diff 已在分支 `intern_123/wm183-weight-mgmt` push（retention=3 + 可选异地备份钩子，未 merge），等冒烟绿 + 主管定备份方案后折进 PR #1。
 
 ## Session 3 - 2026-07-05 冒烟 OOM 修复 + 换卡重跑 + 权重管理前置（主管指令「一直推进」）
 
