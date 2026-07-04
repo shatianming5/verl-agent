@@ -12,12 +12,13 @@ CKPT=${CKPT:?set CKPT=/path/to/global_step_N or CKPT=base for init}
 LABEL=${LABEL:?set LABEL, e.g. bdiag_official_4to5_step150}
 : "${CUDA_VISIBLE_DEVICES:?set CUDA_VISIBLE_DEVICES, e.g. 6,7}"
 DUMP_DIR=${DUMP_DIR:?set DUMP_DIR=/path/to/rollout_dump_dir}
-N_TASKS=${N_TASKS:-3072}          # number of train episodes to roll out
+N_TASKS=${N_TASKS:-2048}          # number of train episodes to roll out (<=2101, prepare cap)
+VAL_BATCH=${VAL_BATCH:-128}       # per-val-batch env count (keep modest to avoid OOM)
 N_TRAJ=${N_TRAJ:-1}               # trajectories per task (env.rollout.n); >=1
 TEMP=${TEMP:-1.0}                 # train-consistent sampling
 N_GPUS=${N_GPUS:-2}
 ROLLOUT_TP=${ROLLOUT_TP:-2}
-GMU=${GMU:-0.80}
+GMU=${GMU:-0.45}
 
 source /root/grpo/grpo_alfworld_common.sh
 export CUDA_VISIBLE_DEVICES
@@ -29,9 +30,9 @@ mkdir -p "$RAY_TMPDIR" "$DUMP_DIR"
 DATA_DIR=/root/data/verl-agent_bdiag_${LABEL}
 LOG=$WORK/logs/bdiag_rollout_${LABEL}_$(date +%Y%m%d_%H%M%S).log
 
-# val.parquet drives how many episodes are rolled out (val_data_size); train.parquet unused here.
+# train.parquet drives how many episodes are rolled out (N_TASKS rows); env serves train games.
 "$VENV/bin/python" -m examples.data_preprocess.prepare \
-  --mode text --train_data_size 16 --val_data_size "$N_TASKS" --local_dir "$DATA_DIR" >/dev/null 2>&1
+  --mode text --train_data_size "$N_TASKS" --val_data_size 128 --local_dir "$DATA_DIR" >/dev/null 2>&1
 
 resume_args=()
 if [[ "$CKPT" == "base" || "$CKPT" == "init" ]]; then
@@ -48,9 +49,9 @@ echo "BDIAG_ROLLOUT_START label=$LABEL ckpt=$CKPT n_tasks=$N_TASKS n_traj=$N_TRA
   +ray_init.object_store_memory=48000000000 \
   algorithm.adv_estimator=grpo \
   data.train_files="$DATA_DIR/text/train.parquet" \
-  data.val_files="$DATA_DIR/text/test.parquet" \
+  data.val_files="$DATA_DIR/text/train.parquet" \
   data.train_batch_size=16 \
-  data.val_batch_size="$N_TASKS" \
+  data.val_batch_size="$VAL_BATCH" \
   data.max_prompt_length=2048 \
   data.max_response_length=512 \
   data.filter_overlong_prompts=True \
