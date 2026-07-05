@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（launch8 疑同点卡死=系统性，派诊断 agent 查 vLLM 根因，盯监控） |
+| Status | Working（纠正dresser误判；launch8疑卡死待val基准；诊断agent续跑查vLLM0.6.3 hang） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |

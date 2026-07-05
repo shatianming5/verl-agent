@@ -11,6 +11,14 @@
 - **团队粒度判断**：当前是单一串行瓶颈(冒烟未通不能铺 full)，无真正可并行子任务，故只派 1 个专职诊断 agent 而非硬拉整队(避免重复诊断+踩 SSH/GPU)。full 多 run 阶段(seed/λ 独立)才是 teams 并行价值所在。
 - launch8 三重监控(bzu80kd6w 日志 + brqfxa110 val-stall)仍在。
 
+### Session 11 续 - dresser 信号被证伪 + vLLM 0.6.3 事实 + 诊断 agent 中断续跑
+
+- **重大纠正**：考古全部历史日志发现 **dresser 信号从头就是错的**——launch3/launch6 成功出过 val metrics(test_score=0.4946)但 dresser 也=0。`dresser is not closed` 只在训练 rollout 打印，**val 不打**。所以 Session 7 起用 dresser=0 判 launch5/7/8「零产出」全部误判。正确 val 信号只有 `Initial validation metrics`。
+- **launch8 正确重判**：val_metrics=0、无 OOM、日志 mtime 停 7min、worker CPU 仍涨但 GPU 功耗仅 112-121W(自旋)。仍疑卡死，但需 launch6「启动→val metrics」精确耗时作基准才能定论(launch6 15:18 启动，val 耗时待算)。
+- **vLLM 事实**：版本 **0.6.3**(V0 时代，排除 V1 问题)；launch6(成功) 与 launch8(卡) 同用 `VLLM_ATTENTION_BACKEND=FLASH_ATTN`，排除后端差异。
+- **诊断 agent**：因 API 500(disallowed token)中断，但留言"smoking gun"。已用 SendMessage 补版本事实让它续跑，聚焦 0.6.3+TP2+enforce_eager 首次生成 hang 的 workaround。
+- 监控 brqfxa110/bzu80kd6w 因 SSH 抖断 exit1(非进程亡)，未重挂——launch8 疑死，等诊断结论统一处理。
+
 ## Session 10 - 2026-07-05 17:47 launch7 判定卡死 → 整卡 8,9 重启 launch8
 
 - **launch7 判定卡死(非慢非OOM)**：59min、dresser=0(零 rollout 产出)、日志 mtime 卡 17:17 停 30min。硬证据：generate worker `R` 但 GPU **功耗仅 156/184W(上限425W)= 忙等自旋非真算**；TaskRunner `futex_wait_queue` 等锁；卡在 line 707(vLLM engine 初始化后首次生成),与 launch6 能过的同一位置(line704)后却不再前进。判为偶发 vLLM/ray 初始化死锁（配置无罪，launch6 同配置出过 val）。
