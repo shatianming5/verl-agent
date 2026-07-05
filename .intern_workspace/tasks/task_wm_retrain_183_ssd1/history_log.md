@@ -1,6 +1,16 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=5 -->
+<!-- METADATA:SESSION=6 -->
+
+## Session 6 - 2026-07-05 14:0x SSH 恢复 + 部署显存修复 + 冒烟第 5 次启动（卡 5,7）
+
+- **SSH 阻塞解除**：主管给密码(password 认证)。sshpass 未装 → 用 `SSH_ASKPASS`+`setsid` 喂密码把公钥 `id_ed25519.pub` 装进 .183 ~zechuan/.ssh/authorized_keys(现 8 行)。免密 SSH 恢复(BatchMode 直连成功)。
+- **部署**：`cat 脚本 | ssh 'cat >'` 推显存修复版脚本到 .183，核验 bash -n 过 + 三旋钮在 + **哈希与本地一致(1d46d92d)** = 运行代码==GitHub 提交(a09ca61)。
+- **选卡**：我离开期间 GPU 大变——卡 0-4 各 free 仅 ~17GB(jusheng 加压)、卡 8,9 仅 ~8GB。启动前实时采样选 free 最高的 **5(37.6GB),7(28.8GB)**，均 >26GB 新峰值需求。
+- **重启冒烟 launch5**：pid 2513289/2513306，log `logs/smoke_launch5.log`，`CUDA_VISIBLE_DEVICES=5,7 TOTAL_EPOCHS=6`。**三旋钮确认生效**：`gmu=0.30 opt_offload=True alloc_conf=expandable_segments:True`；hydra config dump 精确核对 actor 段 `optimizer_offload: True`(line 21，非 ref 的 False)。
+- 挂双监控：日志(bbmndmlfx) + 进程哨兵(b4qso52pr)，盯首个 update_actor / OOM / ckpt。
+- **残余风险**：卡 7 冗余仅 ~3-4GB，若 jusheng 再加压仍可能紧张——冒烟正是验证三管齐下扛不扛得住。
+- **安全**：主管明文发的密码/token 均未落盘、未写 config；已(再次)提示吊销 GitHub token。
 
 ## Session 5b - 2026-07-05 06:0x 冒烟二次 OOM → 三管齐下显存修复（已推 GitHub）+ SSH 阻塞
 

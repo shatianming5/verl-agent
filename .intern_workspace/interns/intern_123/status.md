@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（阻塞：SSH 到 .183 失效，待主管恢复访问） |
+| Status | Working（冒烟 launch5 卡5,7 运行中，新显存配置盯 update_actor） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 5 |
+| Session | 6 |
