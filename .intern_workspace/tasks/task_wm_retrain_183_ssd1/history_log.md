@@ -1,6 +1,15 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=13 -->
+<!-- METADATA:SESSION=14 -->
+
+## Session 14 - 2026-07-05 21:0x 主管定方案 B → PPO_MICRO=4 降峰值 + launch10（卡 6,7）
+
+- 主管拍板 **B（减 ppo_micro_batch_size 降峰值）**。**关键区别**：前 9 次全在"绕开显存需求"(offload/GMU/碎片)都无效；这次 micro_batch 16→4 是**第一次真正降低 update_actor 反向激活需求本身**(激活显存约正比 batch，4 倍缩减)。
+- 实现干净：`PPO_MICRO` 本就 env 可覆盖(`${PPO_MICRO:-16}`)，**无需改脚本/git**，启动用 `PPO_MICRO=4 LOGPROB_MICRO=4 REF_MICRO=4` 覆盖，默认值不动(full 若要仍是 16，待定)。
+- 不单独做探针：val 阶段不受 micro_batch 影响、耗时一样，探针省不了时间，完整冒烟本身就是验证。
+- **launch10**：pid 2728449/2728466，卡 6,7(启动确认空)，`ppo_micro_batch_size_per_gpu: 4` 已进 config，防护叠满 `gmu=0.40 opt_offload=True param_offload=True expandable_segments + micro_batch=4`。
+- 监控 bnns0y7by(单条 tail 不刷屏)，盯 update_actor 门槛。这是唯一动了"计算峰值本身"的手段，最有希望过。
+- 判定标准：过 update_actor + 存 global_step_3 = 通过。若 micro_batch=4 仍 OOM=峰值比激活估计更顽固(可能是模型权重+梯度本身)，需重新评估。
 
 ## Session 13 - 2026-07-05 20:40 过时 wakeup 核实（launch9 已 OOM 终结，等主管定 A/B）
 
