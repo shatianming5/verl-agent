@@ -1,6 +1,15 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=28 -->
+<!-- METADATA:SESSION=29 -->
+
+## Session 29 - 2026-07-06 02:1x ⚠️失误:满占10卡撑爆机器→搜索作废+launch10被连累崩(冒烟成果保住)
+
+- **过时 wakeup(01:49)被赶超**：它要盯的 step3 存 ckpt 上轮已达成(冒烟已通过)。
+- **⚠️我的操作失误**：配置搜索一次起 4 测试点 + launch10 = 满占 .183 全 10 卡跑 5 个 run。**机器共享资源(ray object store/CPU 64核/内存)耗尽** → `raylet memory_monitor: Got negative` → **把所有 run 拖垮，包括已通过冒烟的 launch10(崩在 step4)**。
+- **损失盘点**：✅ 冒烟成果**零损失**(global_step_3 19GB ckpt 完好，冒烟只需 step3=已通过既成事实，step4-6 本多余)；✅ 10 卡全空、机器清干净、残留=0；❌ 配置搜索 4 点数据全作废(资源争抢污染，timing 不可信)。
+- **止血**：kill 全部 5 run 残留 + ray stop(SSH 因机器恢复中多次断，反复重连补清)。"4残留"虚惊=监控自己的 tail/sed 进程，非训练残留。
+- **教训(记 ERROR_BOOK)**：**共享机绝不满占所有卡跑多 run**。ray object_store_memory=64G×N + env worker 会耗尽机器。配置搜索应串行或最多 2 点并行。
+- 冒烟已通过不受影响；配置搜索需重做(串行、不满占)。
 
 ## Session 28 完 - ✅★冒烟 100% 通过!step3 存 ckpt(9 次失败后)
 

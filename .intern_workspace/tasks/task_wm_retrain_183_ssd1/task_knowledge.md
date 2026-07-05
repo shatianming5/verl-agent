@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=28 -->
+<!-- METADATA:SESSION=29 -->
 
 ## Knowledge Entries
 
@@ -62,3 +62,4 @@
     - spd_C: offload=T, mb=8, eager=T (卡4,5)——共卡安全+大batch。
     对比各点 `timing_s/update_actor`+`max_memory_allocated_gb`，选显存<49GB(独占)/<38GB(共卡)且最快。⚠️ 满占 10 卡短测试(~1h)，盯资源勿失控。
 41. **✅ 冒烟通过 + 单 ckpt=19GB(2026-07-06 01:32, launch10)**：过 update_actor + step1/2/3 + `global_step_3` 权重落盘。**单 ckpt 19GB = model×2 7.1GB + optimizer×2 12.3GB(优化器大头) + tokenizer<0.1GB**。→ full SAVE_FREQ=15/150ep = 每run 10个×19GB=**190GB/run**，3run=**570GB**(SSD1 2.4T 装得下)。**retention=3 省到 57GB/run(171GB/3run，省~400GB)**——分支 wm183-weight-mgmt 已备。full 前须定 retention+异地备份。
+42. **⚠️ 单机 run 并发上限(2026-07-06 惨痛教训)**：.183 满占 10 卡跑 5 个 verl run → ray object_store(64G×5)+CPU/内存耗尽，`raylet memory_monitor: Got negative`，**所有 run 崩(含已通过冒烟的 launch10 崩 step4)**。配置搜索数据作废。**规则：共享机最多 2 个 run 并行，重要 run 单独隔离跑，多 run 串行**。详见 ERROR_BOOK E1。冒烟 ckpt 崩前已落盘=零损失(运气)。
