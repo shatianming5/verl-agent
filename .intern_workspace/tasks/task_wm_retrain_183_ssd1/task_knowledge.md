@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=22 -->
+<!-- METADATA:SESSION=23 -->
 
 ## Knowledge Entries
 
@@ -52,3 +52,4 @@
     - .186(20186) 5×**RTX Pro6000-96GB 全空**——但 **Pro6000=96GB 正是主管要排除的那台(主管 2026-07-05 明确不用)**。
     - **矛盾**：唯一干净充裕的独占机(.186)被排除；.136 只 1 张空卡(需 TP=1 单卡，峰值43GB 余量仅 6GB)。TP 默认=2(N_GPUS/ROLLOUT_TP 可 env 覆盖)。
 37. **✅ 方案 B(micro_batch=4)实测有效——冒烟 update_actor 突破(launch10, 2026-07-05)**：`PPO_MICRO=4 LOGPROB_MICRO=4 REF_MICRO=4` env 覆盖(默认 16)，**update_actor 实测峰值 `max_memory_allocated_gb=28.704`**(前 9 次 42.65GB，砍 14GB)，越过 OOM 门槛完成 step1。证实峰值主要来自反向激活(∝batch)、非模型权重+梯度。代价：单步 ~71min(4256s，含 gen 1412s + update_actor 1936s)。**这是 .183 上唯一跑通 update_actor 的配置**。full 若沿用需主管确认(改了超参)。配合独占卡(jusheng 未回占)双保险最稳。
+38. **full 铺 .183(主管定 2026-07-06)**：full 所有 run 铺 .183。.183 常有 8 空卡窗口(jusheng 撤走时)，每 run TP=2 占 2 卡 → 可并行 3-4 个 run。重训清单(README)：`wmlatnp_l0p001_s0`、`wmlatnp_l0p001_s1`、`wmlatnp_l0p005_s0`(延后 s1)。每 run 用 micro_batch=4 防 OOM。冒烟通过(step3 存 ckpt)后才铺。

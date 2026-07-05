@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=22 -->
+<!-- METADATA:SESSION=23 -->
+
+## Session 23 - 2026-07-06 00:11 主管:full 全铺 .183 + launch10 仍在 step3
+
+- **主管指令「可以全部在 183 去跑」**：full 阶段所有 run 铺 .183。快照(00:06)确认 .183 = 2 张我在跑(卡6,7)+ **8 张空**(gpu0-5,8,9)，jusheng 已撤光。8 空卡够 full 并行 3-4 个 run(每 run TP=2 占 2 卡)。
+- **前提**：full 必须等冒烟先通过(launch10 step3 存 ckpt)。
+- launch10 核实：仍在 step3(进度 2/6，step3 约 00:55 完成存 ckpt)，OOM=0、进程存活、wandb 00:09 刚写、GPU 6,7 step 间低占用(10-11GB)。ckpt 目录仍空(step3 未完，正常)。
+- 全机快照(主管给, 00:06)：.9 全占(lvqinhan)、.67 3空、.134 3空、.136 1空、.138 3空、**.183 8空**、.186 全空(96G 排除)。
+- 00:44 检查点 + 监控 bnns0y7by 盯 step3 存 ckpt/OOM，不空转。
 
 ## Session 22 - 2026-07-05 23:45 监控报 step2 完成(进度 2/6,进 step3)
 
