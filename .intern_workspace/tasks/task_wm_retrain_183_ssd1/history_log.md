@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=6 -->
+<!-- METADATA:SESSION=7 -->
+
+## Session 7 - 2026-07-05 14:36 冒烟 launch5 进度核实（val 阶段真算，未 OOM）
+
+- 主管「汇报进度」。核实 launch5(卡 5,7)：进程存活 31min，日志 mtime 卡 14:07(29min 无新行)、关键信号 grep 全空——但**非卡死**。
+- 硬证据(CPU 双采样)：worker(2533063/2533874) CPU 时间 12s 各涨 ~1160 tick(≈满核)，GPU 5,7 util 从 28%→100%、显存 15→20GB/24→29GB 波动 = 确凿在算，正处 val rollout 生成阶段(与历史健康 run 模式一致)。日志停在 wandb 初始化是 verl 按 step flush 特性。
+- **关键观察**：GPU 7 显存已到 29GB 且在爬(启动 free 28.8GB)——正是残余风险点，但当前是 val 的 vLLM KV 占用；真正考验在 val 之后 update_actor 反向峰值。**至今未 OOM**。
+- 双监控仍武装：日志(bbmndmlfx) + 进程哨兵(b4qso52pr)，盯 metrics/update_actor/OOM/ckpt。
+- 结论：三管齐下修复是否奏效，要等它越过 val 进 update_actor 才见分晓；目前进度正常，无异常。
 
 ## Session 6 - 2026-07-05 14:0x SSH 恢复 + 部署显存修复 + 冒烟第 5 次启动（卡 5,7）
 

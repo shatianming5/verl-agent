@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（冒烟 launch5 卡5,7 运行中，新显存配置盯 update_actor） |
+| Status | Working（冒烟 launch5 卡5,7 val 阶段真算，未 OOM，盯 update_actor） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 6 |
+| Session | 7 |
