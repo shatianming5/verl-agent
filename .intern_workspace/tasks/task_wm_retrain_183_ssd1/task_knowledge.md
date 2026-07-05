@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=8 -->
+<!-- METADATA:SESSION=9 -->
 
 ## Knowledge Entries
 
@@ -30,3 +30,5 @@
 20. **诊断：GPU 100% util 但 memory-util 低(22-44%) + env 交互=0 + 0 进度 = 生成被 KV 饿死的龟速**，不是卡死也不是正常算。区别于「日志静默但真算」(那个 env 交互在涨、显存在爬)。val rollout 正常时会刷 ALFWorld `dresser is not closed` 噪声；一条都没有 = rollout 没真正产出。
 21. **三管齐下各分项已验证生效(launch6)**：`expandable_segments` 让 `reserved-but-unallocated` 从 10.22GiB→98MiB(碎片消除铁证)；`optimizer_offload`+GMU0.40 让 val 跑通(metrics 0.4946)。但共卡 jusheng 时 actor+反向峰值 ~34GB + 邻居 11GB 仍超 47.38GB。**结论：共卡场景下最后手段是 `param_offload=True` 或独占整卡。**
 22. **优先独占整卡而非共卡**：jusheng 负载会整卡撤走(观察到卡 6,7 从半占变 0MiB 全空)。整卡 49GB 时我方峰值 ~34GB 绰绰有余，无需任何 offload/降 GMU。故选卡第一优先找 used=0 的整卡；只有全被占时才共卡+降显存。整卡窗口是临时的，jusheng 可能回来，抓紧启动。
+23. **val 本来就慢，别误判龟速（修正条目20的归因）**：launch7 用 GMU0.45 整卡(KV 充足)val 仍 35min+ 未出 metrics，证明 val 慢**主因不是 KV 饿死**，而是 val 首次 vLLM 批量生成 128 局 rollout 的冷启动慢(`enforce_eager=True` 关 CUDA graph → 逐 token 慢) + ALFWorld env step。**基准：launch4(GMU0.45) 约 40min 才出 val metrics**。所以 <40min 无 metrics 属正常，别急着杀。真龟速的判据要更严：>60min 且 dresser=0。(launch5 GMU0.30 是 KV 确实太小叠加，67min 才判死。)
+24. **256 个 `ray::AlfworldWorker` 并行**：ALFWorld env 是多进程并行(非单线程 CPU 瓶颈)。val/train rollout 慢不在 env 并行度，在 vLLM 生成吞吐。

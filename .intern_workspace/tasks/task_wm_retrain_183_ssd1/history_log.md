@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=8 -->
+<!-- METADATA:SESSION=9 -->
+
+## Session 9 - 2026-07-05 17:21 launch7(整卡6,7) 持续监督 + val 慢的再诊断
+
+- 核实 launch7(整卡 6,7, GMU0.45)：进程存活 35min，GPU 6,7 各 26GB(独占，离 49GB 上限远，**不会 OOM 了**)、CPU 双采样确认真算(worker 12s 各涨 ~1200 tick)、util 100%。但 dresser env 交互=0、val metrics 未出——**和 launch5 同阶段**。
+- **推翻上 session 的 GMU 归因**：launch7 用 GMU0.45 整卡(KV 充足)仍慢，说明 val 慢**不是 KV 饿死**。查得 **256 个 `ray::AlfworldWorker` 并行 env 已起** + 2 个 generate worker 在算——瓶颈在 **val 首次 vLLM 批量生成/首批 rollout 冷启动**(enforce_eager=True 关 CUDA graph，逐 token 慢)，非 KV 大小。
+- **修正判断**：launch4(同 GMU0.45)当年也约 40min 才出 val metrics 然后进 update_actor OOM。launch7 才 35min，**仍在正常范围**，上 session 过早怀疑龟速。
+- 设 20min 检查点(ScheduleWakeup)避免又一次 67min 空等：到点看 val metrics 出没出，出=进 update_actor(整卡应能过)，不出=真慢需查 vLLM 生成配置。
+- 显存问题已解(整卡 26GB 用量)，现在焦点转为 **val 生成速度**。双监控 bfhlam1db(日志)+be11eyk8v(进程)仍在。
 
 ## Session 8 - 2026-07-05 15:1x GMU 0.30 过度降 → 回调 0.40 + 冒烟 launch6（卡 5,7）
 
