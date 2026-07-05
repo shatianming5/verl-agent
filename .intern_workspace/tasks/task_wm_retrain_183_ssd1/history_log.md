@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=19 -->
+<!-- METADATA:SESSION=20 -->
+
+## Session 20 - 2026-07-05 22:40 检查点:launch10 稳定训练中(step1→2,健康无OOM)
+
+- 22:40 检查点核实 launch10：**稳定推进**。仍在 step1→step2 间(global_step=1，单步 ~71min，step1 约 22:26 完成，step2 约 23:37，step3 约 01:00 存 ckpt)。
+- 全健康：OOM=0、进程存活、wandb 22:38 刚写、GPU 6,7 独占 26GB、**jusheng 仍未回占**。核心难关(update_actor OOM)已过，现纯等训练走到 step3 存 ckpt = 冒烟 100% 通过。
+- 优化监督节奏：单步 71min 状态不会频繁变，避免空转。监控 bnns0y7by 一直盯(step3 存 ckpt/OOM 会即触发)。检查点拉到 step2/step3 附近再回。
+- 备选 .9(待协调 lvqinhan)/.136(单卡)保持待命，但 launch10 顺利则不需要。
 
 ## Session 19 - 2026-07-05 22:26 检查点:launch10 逼近 update_actor 临界点(显存爬到 33GB,独占保持)
 
