@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=26 -->
+<!-- METADATA:SESSION=27 -->
+
+## Session 27 - 2026-07-06 01:05 主管问单步耗时 → 实测 71min/step + full 需 7.4 天
+
+- 主管问「一个 step 跑多久」。实测两个数据点：step1=4256.97s/it、step2=4267.40s/it = **单步 ~71 分钟，稳定**。
+- **timing 拆解(step1,秒)**：update_actor 1936(45%) + gen 1412(33%) + ref 454 + old_log_prob 446 = step 4256。慢因 param_offload(参数 CPU↔GPU 传输)+micro_batch=4(小batch多次前向)+enforce_eager(关 CUDA graph 逐token gen)——防 OOM 的速度代价。
+- **推算**：冒烟 step3 存 ckpt ≈ 21:05+3.5h ≈ 02:30-03:00(现 01:04 在 step2 尾)。**full 150 epoch 单 run ≈ 150×71min ≈ 178h ≈ 7.4 天**——铺 full 前主管须知此速率。
+- 提示：full 若嫌慢，可考虑独占整卡不开 param_offload(单步能快)，但需卡稳定独占。
+- 健康：OOM=0、进程存活、step2 尾。
 
 ## Session 26 - 2026-07-06 00:50 主管「继续」→ launch10 仍 step2(无变化,健康)
 
