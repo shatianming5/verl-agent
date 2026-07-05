@@ -12,7 +12,7 @@
 - **残余风险**：卡 7 冗余仅 ~3-4GB，若 jusheng 再加压仍可能紧张——冒烟正是验证三管齐下扛不扛得住。
 - **安全**：主管明文发的密码/token 均未落盘、未写 config；已(再次)提示吊销 GitHub token。
 
-## Session 5b - 2026-07-05 06:0x 冒烟二次 OOM → 三管齐下显存修复（已推 GitHub）+ SSH 阻塞
+## Session 5.5 - 2026-07-05 06:0x 冒烟二次 OOM → 三管齐下显存修复（已推 GitHub）+ SSH 阻塞
 
 - **冒烟 launch4 二次 OOM**：又崩在首个 `update_actor` 的 FSDP 反向传播(`_engine_run_backward`)。错误信息精确:单卡 47.38GB，jusheng 邻居占 ~11GB，我进程峰值 ~32GB + 反向要 4.8-5GB → 只剩 3.4-4.2GB 不够，且 ~10GB 是 reserved-but-unallocated 碎片。
 - **根因定性**：结构性显存不足，**换卡救不了**（每张卡都有 jusheng ~11GB）。报错本身建议 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`。
