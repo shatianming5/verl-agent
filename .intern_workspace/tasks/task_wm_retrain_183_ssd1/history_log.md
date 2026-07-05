@@ -10,6 +10,14 @@
 - 监控改进：日志 Monitor(brs1sirpu) 加 `Training Progress 非0` 信号 + 进程哨兵(bltb6dwyk)，补上 launch5「GPU 满载但 0 进度」的盲区。
 - 教训：降显存旋钮要分清「治 OOM」(offload/alloc_conf)与「压吞吐」(GMU)，别一把梭把 rollout 也饿死。
 
+### Session 8 续 - launch6 三次 OOM（但确认修复分项生效）→ 整卡 6,7 开 launch7
+
+- **launch6(GMU0.40,卡5,7) val 通过(metrics=0.4946)但 update_actor 又 OOM**。关键新情报：`reserved but unallocated` 从 launch4 的 **10.22GiB 骤降到 98MiB** → **`expandable_segments` 确认生效，碎片已消除**；`optimizer_offload`+GMU0.40 也让 **val 跑通**。剩下是**纯真实显存需求**：actor+反向激活+梯度 ~34GB，与 jusheng ~11GB 共卡 = 45GB 逼上限，再要 4.94GB 只剩 1.41GB 不够。
+- **诊断收敛**：三管齐下各自都在起作用（碎片消、val 活），但**共卡 jusheng 时真实需求就是超**。根治要么 `param_offload=True`(还没用的最后手段)，要么**独占整卡**。
+- **转机（黄金窗口）**：清理后 GPU 全景大变——**jusheng 撤了卡 6,7，两张各 49GB 整卡全空**！之前所有 OOM 皆因被迫共卡。
+- **决策自主推进**：抓窗口用**整空卡 6,7** 开 launch7，`GMU=0.45`(整卡不缺显存，val 更快) + 保留 opt_offload/expandable_segments(无害且防 jusheng 中途回来)。pid 2599436/2599453，启动前一刻确认 6,7=0MiB，三旋钮 `gmu=0.45 opt_offload=True alloc_conf=expandable_segments:True`。峰值~34GB 在 49GB 整卡上有 15GB 余量。双监控 bfhlam1db(日志)+be11eyk8v(进程)。
+- ⚠️ 风险：jusheng 随时可能回占 6,7；若中途回来仍可能紧张，但有 opt_offload+expandable_segments 兜底。
+
 ## Session 7 - 2026-07-05 14:36 冒烟 launch5 进度核实（val 阶段真算，未 OOM）
 
 - 主管「汇报进度」。核实 launch5(卡 5,7)：进程存活 31min，日志 mtime 卡 14:07(29min 无新行)、关键信号 grep 全空——但**非卡死**。

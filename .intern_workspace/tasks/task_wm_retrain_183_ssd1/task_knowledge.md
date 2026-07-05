@@ -28,3 +28,5 @@
 18. **选卡是启动前的实时动作**：.183 GPU 占用随 jusheng 大幅波动（同一天卡 0-4 从 ~37GB free 变 ~17GB free，卡 8,9 仅 ~8GB）。每次启动前必须现采样选 free 最高的一对，不能沿用上次的卡号。新显存配置峰值 ~24-26GB，需 2 卡各 >26GB。
 19. **降显存旋钮分两类，别混用（launch5 教训）**：治 OOM 的是 `optimizer_offload=True`(Adam~6GB 卸 CPU) + `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`(消碎片)——省的是训练显存，不动 rollout。压吞吐的是 `GMU`(vLLM KV 预留)——降太狠会饿死 val rollout。**GMU 0.30 致 val 128 局并发极低、67min 0 进度**；回调 0.40 兼顾。GMU 只需小幅 trim(0.45→0.40)，OOM 主要靠前两者。
 20. **诊断：GPU 100% util 但 memory-util 低(22-44%) + env 交互=0 + 0 进度 = 生成被 KV 饿死的龟速**，不是卡死也不是正常算。区别于「日志静默但真算」(那个 env 交互在涨、显存在爬)。val rollout 正常时会刷 ALFWorld `dresser is not closed` 噪声；一条都没有 = rollout 没真正产出。
+21. **三管齐下各分项已验证生效(launch6)**：`expandable_segments` 让 `reserved-but-unallocated` 从 10.22GiB→98MiB(碎片消除铁证)；`optimizer_offload`+GMU0.40 让 val 跑通(metrics 0.4946)。但共卡 jusheng 时 actor+反向峰值 ~34GB + 邻居 11GB 仍超 47.38GB。**结论：共卡场景下最后手段是 `param_offload=True` 或独占整卡。**
+22. **优先独占整卡而非共卡**：jusheng 负载会整卡撤走(观察到卡 6,7 从半占变 0MiB 全空)。整卡 49GB 时我方峰值 ~34GB 绰绰有余，无需任何 offload/降 GMU。故选卡第一优先找 used=0 的整卡；只有全被占时才共卡+降显存。整卡窗口是临时的，jusheng 可能回来，抓紧启动。

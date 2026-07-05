@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（GMU 回调 0.40，冒烟 launch6 卡5,7 启动，盯 val+update_actor） |
+| Status | Working（launch7 独占整卡6,7 GMU0.45 运行中，盯 update_actor） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
