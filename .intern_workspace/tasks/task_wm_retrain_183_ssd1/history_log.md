@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=18 -->
+<!-- METADATA:SESSION=19 -->
+
+## Session 19 - 2026-07-05 22:26 检查点:launch10 逼近 update_actor 临界点(显存爬到 33GB,独占保持)
+
+- 22:26 检查点核实 launch10(方案 B, micro_batch=4, .183 卡6,7)：**逼近决定性节点**。
+- **关键变化**：GPU 6,7 显存从上轮 3GB **爬到 33GB**——val 生成结束，进入 update_actor 前准备(ref/old log_prob)或 update_actor 本身。前 9 次都死在这一步。
+- **健康 + 独占双保险**：无 OOM、进程存活、wandb 22:25 刚写(1min 前)；**GPU 6,7 仍只有我占(33GB)、jusheng 没回来**。33GB 远低于 49GB 上限，余量 16GB。micro_batch=4 降峰值 + 独占不被抢，双保险，最有希望挺过 update_actor。
+- 尚未落地(val_metrics=0、无 step3 ckpt)。重设 12min 短检查点(约 22:38)，那时应已过 update_actor/出 metrics/存 ckpt。
+- .9(待协调 lvqinhan)/.136(单卡)备选未动，先看 launch10 落地。
 
 ## Session 18 - 2026-07-05 21:59 检查点:launch10 仍健康在 val,jusheng 未回占(好兆头)
 
