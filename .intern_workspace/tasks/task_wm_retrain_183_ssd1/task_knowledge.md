@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=26 -->
+<!-- METADATA:SESSION=28 -->
 
 ## Knowledge Entries
 
@@ -54,3 +54,10 @@
 37. **✅ 方案 B(micro_batch=4)实测有效——冒烟 update_actor 突破(launch10, 2026-07-05)**：`PPO_MICRO=4 LOGPROB_MICRO=4 REF_MICRO=4` env 覆盖(默认 16)，**update_actor 实测峰值 `max_memory_allocated_gb=28.704`**(前 9 次 42.65GB，砍 14GB)，越过 OOM 门槛完成 step1。证实峰值主要来自反向激活(∝batch)、非模型权重+梯度。代价：单步 ~71min(4256s，含 gen 1412s + update_actor 1936s)。**这是 .183 上唯一跑通 update_actor 的配置**。full 若沿用需主管确认(改了超参)。配合独占卡(jusheng 未回占)双保险最稳。
 38. **full 铺 .183(主管定 2026-07-06)**：full 所有 run 铺 .183。.183 常有 8 空卡窗口(jusheng 撤走时)，每 run TP=2 占 2 卡 → 可并行 3-4 个 run。重训清单(README)：`wmlatnp_l0p001_s0`、`wmlatnp_l0p001_s1`、`wmlatnp_l0p005_s0`(延后 s1)。每 run 用 micro_batch=4 防 OOM。冒烟通过(step3 存 ckpt)后才铺。
 39. **实测单步耗时 = 71min(launch10, micro_batch=4+param_offload+enforce_eager)**：step1=4256.97s/it、step2=4267.40s/it 稳定。timing 拆解：update_actor 1936s(45%)+gen 1412s(33%)+ref 454s+old_log_prob 446s。**推算 full 150 epoch 单 run ≈ 178h ≈ 7.4 天**。慢因防 OOM 三件套(param_offload 传输/micro_batch=4 小批/enforce_eager 逐token)。**full 若嫌慢：独占整卡不开 param_offload 可提速，但需卡全程独占**。冒烟(6 epoch)step3 存 ckpt ≈ 启动+3.5h。
+40. **配置优化搜索(主管要"显存达标+最快最优", 2026-07-06 01:10 起, .183 全 10 卡)**：短测试(TOTAL_EPOCHS=2,VAL_BEFORE_TRAIN=False 跳val快出 timing+峰值)。矩阵：
+    - baseline launch10: offload=T, mb=4, eager=T → update_actor 1936s, 峰值 28.7GB(卡6,7,保冒烟)。
+    - speedtest: offload=F, mb=4, eager=T (卡8,9)。
+    - spd_A: offload=F, mb=8, eager=T (卡0,1)——大batch提速。
+    - spd_B: offload=F, mb=4, eager=F/CUDA graph (卡2,3)——提速gen(gen占33%)。
+    - spd_C: offload=T, mb=8, eager=T (卡4,5)——共卡安全+大batch。
+    对比各点 `timing_s/update_actor`+`max_memory_allocated_gb`，选显存<49GB(独占)/<38GB(共卡)且最快。⚠️ 满占 10 卡短测试(~1h)，盯资源勿失控。

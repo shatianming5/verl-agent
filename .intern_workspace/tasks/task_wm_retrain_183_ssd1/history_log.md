@@ -1,6 +1,21 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=27 -->
+<!-- METADATA:SESSION=28 -->
+
+## Session 28 - 2026-07-06 01:1x 主管「试试 param_offload」→ 起 param_offload=False 提速测试(卡8,9)
+
+- 主管要验证方案 A 提速：独占整卡不开 param_offload 快多少。**不动 launch10**(方案B含param_offload,卡6,7,step2尾,约02:30出ckpt保冒烟通过)，另起并行测试 run。
+- **speedtest_nooffload**：卡 8,9(启动确认空)，`PARAM_OFFLOAD=False`(其余 micro_batch=4+opt_offload+expandable_segments 不变)，`VAL_BEFORE_TRAIN=False` 跳 val 快速出 timing，独立 tag 不碰 launch10 ckpt。pid 2811530。旋钮确认 `param_offload=False`。
+- 目的：读第一个 `timing_s/update_actor` 对比 launch10 的 1936s，量化 param_offload 的速度代价。
+- **风险验证点**：param_offload=False 峰值 ~42GB，独占整卡 49GB 装得下，但**若 jusheng 回占 8,9 会 OOM**——正是要验证"独占能否省掉 param_offload"。
+- 监控 b0yyivrsq 盯 OOM/update_actor timing。两 run 并行互不干扰。
+
+### Session 28 续 - 主管升级要求「找显存达标+最快最优配置」→ 4 点并行搜索
+
+- 主管从"试 param_offload"升级为"**找显存限制+速度可加速的最优方法**"=参数搜索。用短测试(TOTAL_EPOCHS=2,跳val,快出 timing+峰值)并行铺满 .183 剩余空卡。
+- 4 测试点：speedtest(offF,mb4,eager, 卡8,9) + spd_A(offF,mb8, 卡0,1) + spd_B(offF,mb4,CUDA graph, 卡2,3) + spd_C(offT,mb8, 卡4,5)。对比 baseline launch10(offT,mb4,eager=1936s/28.7GB)。
+- 变量:param_offload(省13GB/慢)、micro_batch(大→快但峰值升)、enforce_eager(F开CUDA graph提速gen 33%那块)。选 update_actor timing 最短且峰值<49GB(独占)/<38GB(共卡)。
+- ⚠️ 满占 .183 全 10 卡(launch10 保冒烟 6,7 + 4 测试点 0-5,8,9)，短测试~1h，盯资源勿失控、勿影响他人。汇总监控 bsabf0xvb 带标签盯 4 点 timing/峰值/OOM。
 
 ## Session 27 - 2026-07-06 01:05 主管问单步耗时 → 实测 71min/step + full 需 7.4 天
 
