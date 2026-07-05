@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=15 -->
+<!-- METADATA:SESSION=16 -->
 
 ## Knowledge Entries
 
@@ -43,3 +43,11 @@
 33. **可用机器清单缺口**：本地无 ssh config；确知只有 .183(1.14.177.180:20183, zechuan)。gpudev(10.100.2.64)/gpudev2(10.100.2.40) 故障中。Session 0「7 台机器普查」未落盘。.183 上 GPU 6-9 会周期性全空(jusheng 撤走)但也会回占，不能保证全程独占。换机器需向主管/coordinator 要清单。
 34. **⚠️⚠️⚠️ 显存旋钮全部无效——峰值是刚性需求(launch9 param_offload=True 仍 OOM 定论)**：param_offload 生效但 update_actor 仍占 41.08GB(vs 不开 42.65GB，只省 1.5GB)。原因：**FSDP 反向传播必须把 offload 的参数 all-gather 回 GPU 计算，offload 只省闲置时段、救不了计算峰值**。故 GMU/expandable_segments/optimizer_offload/param_offload 对 update_actor 峰值全部无效。峰值 ~41-43GB 是计算本身刚性需求。**唯一出路：(a) 全程独占整卡(jusheng 完全不来)；(b) 降峰值本身=减 ppo_micro_batch_size(16→8/4)/max_response_length/val_batch_size(改超参需主管批)**。.183+旋钮路线已穷尽。
 35. **可用机器唯一 = .183(2026-07-05 确认)**：探测 gpudev(10.100.2.64:24187)/gpudev2(10.100.2.40:22) 仍 Connection closed 故障未恢复。workspace 仅 2 intern(123+clade)，无其他 GPU 机凭证。`8xH100` 是文档泛指非可连机。要换独占机器必须向主管/coordinator 要清单+凭证，不能盲扫内网。→ 方案 A(独占别的机器)缺机器，实际只能靠 .183 独占整卡(不可靠，jusheng 回占) 或 方案 B(降 batch)。
+36. **完整机器清单(主管给, 2026-07-05 21:2x 探测)**: 全部 `ssh -p 200XX zechuan@1.14.177.180`。
+    - .9(20009) 8×A100-64GB: 通，**全被 lvqinhan 占满**(各 free~700M)。
+    - .67(20067) 8×A100(经.9代理): Connection closed 不通。
+    - .134(20134) 5×A6000-48GB: Permission denied 无凭证。
+    - .136(20136) 5×4090-49GB: 通，**gpu4 整空(49GB)**，余 ~17GB。
+    - .138(20138) 5×4090: 通，5 张各 free 26-29GB(半占，单卡装不下 43GB 峰值)。
+    - .186(20186) 5×**RTX Pro6000-96GB 全空**——但 **Pro6000=96GB 正是主管要排除的那台**。
+    - **矛盾**：唯一干净充裕的独占机(.186)被排除；.136 只 1 张空卡(需 TP=1 单卡，峰值43GB 余量仅 6GB)。TP 默认=2(N_GPUS/ROLLOUT_TP 可 env 覆盖)。
