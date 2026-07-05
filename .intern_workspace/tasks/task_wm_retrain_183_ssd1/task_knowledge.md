@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=7 -->
+<!-- METADATA:SESSION=8 -->
 
 ## Knowledge Entries
 
@@ -26,3 +26,5 @@
 16. **.183 SSH 认证脆弱**：本机连 .183 靠临时认证态，会失效 → `Permission denied(publickey,password)`。`~/.ssh/id_ed25519`(指纹 SHA256:2DVxXB9Sq9hf1YFEU1CO6GbEIwOt8p9w+uWuxlHDrdg)未授权到 .183。恢复需主管把该公钥加进 .183 ~zechuan/.ssh/authorized_keys 或提供旧私钥。scp 比 ssh 更严(要 `-o StrictHostKeyChecking=accept-new`)。**GitHub token 与 SSH 登录是两套凭证，互不通用。**
 17. **SSH 免密恢复法（已生效）**：.183 password=zechuan@hcp123(勿落盘)。sshpass 未装时用 `SSH_ASKPASS=<吐密码脚本> SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no ... 'cat pub >> ~/.ssh/authorized_keys'` 一次性装公钥，之后 BatchMode 免密。传文件走 `cat 本地 | ssh 'cat > 远端'`（scp 认证与 ssh 不同源，易 Permission denied）。
 18. **选卡是启动前的实时动作**：.183 GPU 占用随 jusheng 大幅波动（同一天卡 0-4 从 ~37GB free 变 ~17GB free，卡 8,9 仅 ~8GB）。每次启动前必须现采样选 free 最高的一对，不能沿用上次的卡号。新显存配置峰值 ~24-26GB，需 2 卡各 >26GB。
+19. **降显存旋钮分两类，别混用（launch5 教训）**：治 OOM 的是 `optimizer_offload=True`(Adam~6GB 卸 CPU) + `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`(消碎片)——省的是训练显存，不动 rollout。压吞吐的是 `GMU`(vLLM KV 预留)——降太狠会饿死 val rollout。**GMU 0.30 致 val 128 局并发极低、67min 0 进度**；回调 0.40 兼顾。GMU 只需小幅 trim(0.45→0.40)，OOM 主要靠前两者。
+20. **诊断：GPU 100% util 但 memory-util 低(22-44%) + env 交互=0 + 0 进度 = 生成被 KV 饿死的龟速**，不是卡死也不是正常算。区别于「日志静默但真算」(那个 env 交互在涨、显存在爬)。val rollout 正常时会刷 ALFWorld `dresser is not closed` 噪声；一条都没有 = rollout 没真正产出。

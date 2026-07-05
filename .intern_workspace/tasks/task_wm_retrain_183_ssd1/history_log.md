@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=7 -->
+<!-- METADATA:SESSION=8 -->
+
+## Session 8 - 2026-07-05 15:1x GMU 0.30 过度降 → 回调 0.40 + 冒烟 launch6（卡 5,7）
+
+- **诊断 launch5 龟速**：进程 67min 存活、CPU 双采样确认真算、GPU 5,7 100% util——但 **memory-util 仅 22%/44%、`dresser` env 交互=0、val metrics=0、日志 67min 0 进度**。判定 `GMU=0.30` 把 vLLM KV 压太小，128 局 val rollout 并发降到极低 → 龟速不实用（非卡死非 OOM，是性能副作用）。
+- **自我纠偏**：三管齐下里 GMU 0.30 降过头。真正治 update_actor OOM 的是 `optimizer_offload`(省训练显存)+`expandable_segments`(消碎片)，二者不动 rollout 吞吐；GMU 只需小幅 trim。回调 **0.45→0.40**（留 update_actor 余量又不饿死 val）。commit 07ca29d push。
+- **重启 launch6**：清理 launch5 残留(SSH 一度断，二次补清干净) + 归档龟速日志。部署 GMU0.40 脚本，哈希核验 c2982af4 == 本地。实时选卡 5,7(free 37.6/28.8GB)。pid 2556537/2556554，三旋钮确认 `gmu=0.40 opt_offload=True alloc_conf=expandable_segments:True`。
+- 监控改进：日志 Monitor(brs1sirpu) 加 `Training Progress 非0` 信号 + 进程哨兵(bltb6dwyk)，补上 launch5「GPU 满载但 0 进度」的盲区。
+- 教训：降显存旋钮要分清「治 OOM」(offload/alloc_conf)与「压吞吐」(GMU)，别一把梭把 rollout 也饿死。
 
 ## Session 7 - 2026-07-05 14:36 冒烟 launch5 进度核实（val 阶段真算，未 OOM）
 
