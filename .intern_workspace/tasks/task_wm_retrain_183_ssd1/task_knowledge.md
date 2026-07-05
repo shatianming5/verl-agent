@@ -61,3 +61,4 @@
     - spd_B: offload=F, mb=4, eager=F/CUDA graph (卡2,3)——提速gen(gen占33%)。
     - spd_C: offload=T, mb=8, eager=T (卡4,5)——共卡安全+大batch。
     对比各点 `timing_s/update_actor`+`max_memory_allocated_gb`，选显存<49GB(独占)/<38GB(共卡)且最快。⚠️ 满占 10 卡短测试(~1h)，盯资源勿失控。
+41. **✅ 冒烟通过 + 单 ckpt=19GB(2026-07-06 01:32, launch10)**：过 update_actor + step1/2/3 + `global_step_3` 权重落盘。**单 ckpt 19GB = model×2 7.1GB + optimizer×2 12.3GB(优化器大头) + tokenizer<0.1GB**。→ full SAVE_FREQ=15/150ep = 每run 10个×19GB=**190GB/run**，3run=**570GB**(SSD1 2.4T 装得下)。**retention=3 省到 57GB/run(171GB/3run，省~400GB)**——分支 wm183-weight-mgmt 已备。full 前须定 retention+异地备份。

@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（配置优化搜索:launch10保冒烟+4测试点并行(offload/micro/graph组合)找显存达标最快配置） |
+| Status | Working（✅冒烟通过!存step3 ckpt(19GB);已发飞书;配置搜索4点找full最优;待主管定full配置+权重方案） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |

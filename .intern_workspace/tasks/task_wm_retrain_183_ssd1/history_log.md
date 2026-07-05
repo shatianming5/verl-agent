@@ -2,6 +2,14 @@
 
 <!-- METADATA:SESSION=28 -->
 
+## Session 28 完 - ✅★冒烟 100% 通过!step3 存 ckpt(9 次失败后)
+
+- **监控报 `Training Progress: 3/6` + `Saving model to .../global_step_3/actor/model_*.pt`——冒烟通过!** launch10(方案B micro_batch=4)完整跑通:数据→val→train step1/2/3→**权重落盘**。9 次失败后首次。
+- **★单 ckpt 体积 = 19GB**：model 分片×2=7.1GB + **optimizer 分片×2=12.3GB**(优化器状态是大头) + tokenizer/extra <0.1GB。
+- **权重管理硬约束(推算)**：full SAVE_FREQ=15/150ep=每run存10个×19GB=**190GB/run**，3run=**570GB**。SSD1 现 2.4T 空闲装得下但吃大块。**retention=3 每run留3个=57GB/run,3run 171GB,省~400GB**——分支 `intern_123/wm183-weight-mgmt` 已备改动。
+- 训练质量健康：val test_score=0.4946、pg_loss/grad_norm正常、valid_action_ratio=0.98、OOM=0。
+- 已发飞书冒烟通过报告(`smoke_pass_report.md`)。launch10 继续 step4-6。配置搜索 4 点(见下)并行中,~1h 出最优。
+
 ## Session 28 - 2026-07-06 01:1x 主管「试试 param_offload」→ 起 param_offload=False 提速测试(卡8,9)
 
 - 主管要验证方案 A 提速：独占整卡不开 param_offload 快多少。**不动 launch10**(方案B含param_offload,卡6,7,step2尾,约02:30出ckpt保冒烟通过)，另起并行测试 run。
