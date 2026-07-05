@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=20 -->
+<!-- METADATA:SESSION=21 -->
+
+## Session 21 - 2026-07-05 23:42 检查点:launch10 仍训练中(step2 的 update_actor,健康无OOM)
+
+- 23:42 检查点：进度仍显示 step1(global_step=1)，但 GPU 6,7 显存爬到 34GB=**正在 step2 的 update_actor 重计算**(与 step1 爬 33GB 同模式)。距 step1 完成(22:26)76min，step2 即将落地。
+- 全健康：OOM=0、进程存活、wandb 23:41 刚写(1min 前)、jusheng 仍未回占。**正常的慢(单步含训练 ~50-70min)，非卡住**(wandb 在写、显存在动)。
+- ckpt 目录仍空(step3 才存，SAVE_FREQ=3)。核心难关早已过，纯等训练走到 step3。
+- 拉长检查点节奏避免空转，监控 bnns0y7by 会在 step3 存 ckpt/OOM 时即触发。
 
 ## Session 20 - 2026-07-05 22:40 检查点:launch10 稳定训练中(step1→2,健康无OOM)
 
