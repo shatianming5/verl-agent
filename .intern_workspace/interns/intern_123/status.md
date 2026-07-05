@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（纠正dresser误判；launch8疑卡死待val基准；诊断agent续跑查vLLM0.6.3 hang） |
+| Status | Working（纠正2次误判：launch8健康在跑，val本就慢60-80min，约19:10出metrics） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |

@@ -19,6 +19,14 @@
 - **诊断 agent**：因 API 500(disallowed token)中断，但留言"smoking gun"。已用 SendMessage 补版本事实让它续跑，聚焦 0.6.3+TP2+enforce_eager 首次生成 hang 的 workaround。
 - 监控 brqfxa110/bzu80kd6w 因 SSH 抖断 exit1(非进程亡)，未重挂——launch8 疑死，等诊断结论统一处理。
 
+### Session 11 再续 - 第二次纠正：launch8 其实健康，val 本就慢 60-80min
+
+- 诊断 agent 二度因同一 API 500 挂掉→不再依赖它，自己算基准。**用 wandb run 目录 mtime 定位 launch6 时间线**：启动 15:18:40 → wandb 末次写入(OOM崩溃)16:45:18 = **全程约 87min，val metrics(行797)紧邻 OOM(行850)= val 本身耗时约 60-80min**。
+- **决定性纠正**：launch8 才跑 39min 没出 val metrics = **完全正常，没卡死**！铁证：launch8 wandb 数据文件 mtime=18:27:58(刚刚在写) + worker CPU 10s 涨 1005 tick(满核在算)。之前(叠加被证伪的 dresser)误判卡死，**险些第三次误杀健康 run**。
+- **认知修正**：val 慢(60-80min)是 `enforce_eager=True` 逐 token 生成的固有特性；GPU 低功耗(~110W)也是逐 token 的正常表现，**都不是 bug/卡死**。launch5/7 当年很可能也没真卡死，是我误判。
+- **正确做法**：launch8 继续等，不杀。重挂监控用**可靠信号**：wandb mtime(brqt8a8sb 日志 + b5aa207ml 健康哨兵，wandb>10min 不更新才判真死)。按基准 launch8 约 19:10 该出 val metrics。
+- 教训：判 run 健康看 **wandb 数据文件 mtime**(最可靠) + worker CPU 增量，不看日志 flush、不看 dresser、不看瞬时功耗。
+
 ## Session 10 - 2026-07-05 17:47 launch7 判定卡死 → 整卡 8,9 重启 launch8
 
 - **launch7 判定卡死(非慢非OOM)**：59min、dresser=0(零 rollout 产出)、日志 mtime 卡 17:17 停 30min。硬证据：generate worker `R` 但 GPU **功耗仅 156/184W(上限425W)= 忙等自旋非真算**；TaskRunner `futex_wait_queue` 等锁；卡在 line 707(vLLM engine 初始化后首次生成),与 launch6 能过的同一位置(line704)后却不再前进。判为偶发 vLLM/ray 初始化死锁（配置无罪，launch6 同配置出过 val）。
