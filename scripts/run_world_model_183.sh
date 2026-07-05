@@ -131,6 +131,11 @@ GMU=${GMU:-0.40}
 # Offload optimizer state (Adam moments, ~6GB) to CPU during actor update — the
 # backward-pass peak is what OOM'd on cards 4,5. param stays on GPU for speed.
 OPTIMIZER_OFFLOAD=${OPTIMIZER_OFFLOAD:-True}
+# Offload actor params to CPU too. The update_actor backward peak is ~43GB even on
+# a whole 49GB card; with .183 shared with jusheng (returns ~70min in), that OOMs
+# the moment a neighbor lands. param_offload drops peak to ~30GB. Slower per step
+# but survives neighbor contention — worth it since smoke is only 6 epochs.
+PARAM_OFFLOAD=${PARAM_OFFLOAD:-True}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-150}
 SAVE_FREQ=${SAVE_FREQ:-15}
 TEST_FREQ=${TEST_FREQ:-5}
@@ -151,7 +156,7 @@ mkdir -p "$CKPT_DIR"
 printf '%s\n' "$RAY_TMPDIR" > "$WORK/logs/${EXP}_ray_tmpdir.txt"
 DATA_DIR=${DATA_DIR:-$WORK/data/verl-agent_wmretrain}
 
-echo "RUN_WM_183 kind=$KIND seed=$SEED tag=$TAG cuda=$CUDA_VISIBLE_DEVICES value=$VALUE work=$WORK model=$MODEL ckpt=$CKPT_DIR rollout_data_dir=$ROLLOUT_DATA_DIR epochs=$TOTAL_EPOCHS gmu=$GMU opt_offload=$OPTIMIZER_OFFLOAD alloc_conf=$PYTORCH_CUDA_ALLOC_CONF"
+echo "RUN_WM_183 kind=$KIND seed=$SEED tag=$TAG cuda=$CUDA_VISIBLE_DEVICES value=$VALUE work=$WORK model=$MODEL ckpt=$CKPT_DIR rollout_data_dir=$ROLLOUT_DATA_DIR epochs=$TOTAL_EPOCHS gmu=$GMU opt_offload=$OPTIMIZER_OFFLOAD param_offload=$PARAM_OFFLOAD alloc_conf=$PYTORCH_CUDA_ALLOC_CONF"
 
 if [[ -s "$DATA_DIR/text/train.parquet" && -s "$DATA_DIR/text/test.parquet" ]]; then
   echo "REUSE_PREPARED_DATA data_dir=$DATA_DIR"
@@ -185,7 +190,7 @@ disable_proxy_for_ray
   actor_rollout_ref.actor.kl_loss_coef=0.01 \
   actor_rollout_ref.actor.kl_loss_type=low_var_kl \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
-  actor_rollout_ref.actor.fsdp_config.param_offload=False \
+  actor_rollout_ref.actor.fsdp_config.param_offload="$PARAM_OFFLOAD" \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload="$OPTIMIZER_OFFLOAD" \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu="$LOGPROB_MICRO" \
   actor_rollout_ref.rollout.tensor_model_parallel_size="$ROLLOUT_TP" \
