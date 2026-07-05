@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=17 -->
+<!-- METADATA:SESSION=18 -->
+
+## Session 18 - 2026-07-05 21:59 检查点:launch10 仍健康在 val,jusheng 未回占(好兆头)
+
+- 21:59 检查点核实 launch10(方案 B, micro_batch=4, .183 卡6,7)：**健康在跑**——进程存活、wandb 21:58 刚写(23s 前)、无 OOM、val_metrics 未出(启动~55min，val 需 60-80min，仍在 val 生成)。
+- **积极信号**：GPU 6,7 此刻**只有我占(各 3GB)，jusheng 没回来**。前几次都是 jusheng 回占才 OOM；若这次它一直不回，launch10 可能靠独占+micro_batch=4 双保险过 update_actor。
+- 还没到决定性节点(update_actor)，按基准还需 ~10-25min val 才出 metrics。重设 25min 短检查点(约 22:25)，那时真正见分晓。
+- .9 仍待协调 lvqinhan、.136 单卡备选，均未动——先看 launch10。
 
 ## Session 17 - 2026-07-05 21:40 主管定「不用 96G」→ .9 待协调 + launch10 健康跑向 update_actor
 
