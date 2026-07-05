@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（纠正2次误判：launch8健康在跑，val本就慢60-80min，约19:10出metrics） |
+| Status | Working（冒烟定论:update_actor峰值43GB硬需求;主管指示换可独占卡/机器排除96GB那台;待机器清单） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |

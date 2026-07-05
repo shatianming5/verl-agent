@@ -2,6 +2,15 @@
 
 <!-- METADATA:SESSION=11 -->
 
+### Session 11 终 - launch8 update_actor OOM 定论 + 主管指示换卡/机器(排除96GB那台)
+
+- **launch8 结局**：val 通过(test_score=0.4946) → update_actor 反向传播 OOM(18:59)。**决定性数字**：即便独占整卡 49GB，PyTorch 纯真实峰值 **42.65GB**(碎片仅 128MB=expandable_segments 已生效无浪费)，jusheng 跑到 ~70min 回占 6,7,8,9 → 逼爆。
+- **诊断彻底收敛**：val 能过(第二次纠正"val 慢 60-80min 非卡死"成立)；真正过不去的是 update_actor 反向峰值 ~43GB，逼近单卡 47.38GB。已试尽 GMU/expandable_segments/optimizer_offload 都没动"反向激活+梯度"这个最大头。剩 param_offload=True(降峰值但训练 1.5-2x 慢)或独占不被抢的卡。
+- **主管决策**：用别的卡/机器，**但排除那台 96GB 的**(疑似 workspace 记录里的 8xH100)。不用 param_offload 拖速度。
+- **清理**：kill launch8 残留 + ray stop(SSH 抖断二次补清)+ 归档日志。GPU 还给 jusheng。
+- **机器清单缺口**：本地无 SSH config/known_hosts；任务记录只有 .183(1.14.177.180:20183) + 故障的 gpudev(10.100.2.64)/gpudev2(10.100.2.40)。Session 0「7 台机器普查」未落盘成清单(疑在 intern_clade/coordinator 手里)。
+- **关键新发现**：.183 当前 **卡 6,7,8,9 四张全空(各 49GB,0 占用,jusheng 全撤)**！不用换机器 .183 就有独占整卡窗口。但风险同 launch7/8：跑到 update_actor 时 jusheng 可能回占。**需主管确认这些卡能否稳定独占，或提供其他可独占机器清单**——不盲目启动第九次。
+
 ## Session 11 - 2026-07-05 18:15 launch8 疑似同点卡死 → 判为系统性非偶发 + 派诊断 agent
 
 - **修正 Session 10 的"偶发死锁"判断**：launch8(整卡 8,9)跑 27min，信号与 launch7 卡死时**完全一致**：dresser=0(零 rollout 产出)、val metrics 未出、**GPU 功耗仅 94/107W(上限 425W)**、util 45/63%。连续两次卡在同一点 = **系统性复现**，不是运气。Session 10 判"偶发、重启即可"是错的。
