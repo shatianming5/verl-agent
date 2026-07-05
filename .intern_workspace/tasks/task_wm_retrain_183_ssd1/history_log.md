@@ -13,6 +13,16 @@
 - 清理 launch9(SSH 抖断二次补清 0 残留)+ 归档。6,7,8,9 现又全空(但会再被回占)。
 - **不再盲目重试第十次**。已达需主管决策的转折点，将发飞书完整诊断报告。
 
+<!-- METADATA:SESSION=13 -->
+
+## Session 13 - 2026-07-05 20:40 过时 wakeup 核实（launch9 已 OOM 终结，等主管定 A/B）
+
+- 20:40 定时 wakeup 触发，但已被现实赶超：launch9 早在上轮(Session 12 终)update_actor OOM 崩溃，param_offload=True 也没扛住(峰值 41GB)。wakeup 的前提「param_offload 压到 30GB 能扛住」已被证伪，不按它重试。
+- 核实 .183：launch9 pid 2689474 已终结、0 残留、日志已归档，全符合预期。
+- 空卡现状：6,7,8,9 全空(启动假象)，jusheng 在 0-5 各占 ~11.5GB，跑到 update_actor 会回占。
+- **状态未变**：诊断已收敛(显存旋钮全无效、峰值 43GB 刚性)，飞书报告已发，等主管定 A(独占整卡)或 B(减 ppo_micro_batch_size 降峰值)。不盲目重试第十次。
+- 考虑过趁 GPU 闲验证 B 可行性(micro_batch=4 极小试跑)，但改超参+占 GPU 属该先问主管的动作，保持等待。
+
 ## Session 12 - 2026-07-05 19:40 主管定「用 183」→ param_offload 兜底 + launch9（卡 6,7）
 
 - 主管拍板「继续用 183」。.183 卡 6,7,8,9 仍全空，用 **6,7**。
