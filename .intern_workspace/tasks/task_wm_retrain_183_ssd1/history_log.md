@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=11 -->
+<!-- METADATA:SESSION=12 -->
+
+## Session 12 - 2026-07-05 19:40 主管定「用 183」→ param_offload 兜底 + launch9（卡 6,7）
+
+- 主管拍板「继续用 183」。.183 卡 6,7,8,9 仍全空，用 **6,7**。
+- **关键防护升级**：前 8 次 OOM 均因 jusheng 跑到 ~70min 回占、撞 update_actor 反向峰值 43GB。这次加 **`param_offload=True`**(actor 参数分片卸 CPU，峰值 43GB→~30GB)——即便 jusheng 回占也留 ~19GB 余量。代价单步慢，但冒烟仅 6 epoch 值得。脚本参数化 `PARAM_OFFLOAD`(默认 True)，commit 2464efb push，部署哈希核验 add3db6d==本地。
+- **launch9**：pid 2689457/2689474，卡 6,7，四旋钮确认 `gmu=0.40 opt_offload=True param_offload=True alloc_conf=expandable_segments:True`。这是 8 次里防护最强配置。
+- 监控 beieg2dux(单条 tail 不重连，避免 launch8 那种刷屏风暴)，盯 val metrics/OOM/训练步/ckpt。
+- 判健康仍用可靠信号：wandb `.wandb` mtime + worker CPU 增量，不用 dresser。基准 val 60-80min + param_offload 更慢，约 21:00 该出 val metrics。
 
 ### Session 11 终 - launch8 update_actor OOM 定论 + 主管指示换卡/机器(排除96GB那台)
 

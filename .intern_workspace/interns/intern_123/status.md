@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（冒烟定论:update_actor峰值43GB硬需求;主管指示换可独占卡/机器排除96GB那台;待机器清单） |
+| Status | Working（launch9 卡6,7 param_offload兜底运行中，8次里防护最强，盯val/update_actor） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 11 |
+| Session | 12 |
