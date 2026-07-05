@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（launch10逼近update_actor:显存爬33GB独占保持无OOM,双保险最有希望,约22:38落地） |
+| Status | Working（★突破:launch10过update_actor!方案B奏效峰值28.7GB,训练step1/6,约01:00存step3ckpt=通过） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |

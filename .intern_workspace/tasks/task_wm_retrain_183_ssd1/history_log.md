@@ -10,6 +10,14 @@
 - 尚未落地(val_metrics=0、无 step3 ckpt)。重设 12min 短检查点(约 22:38)，那时应已过 update_actor/出 metrics/存 ckpt。
 - .9(待协调 lvqinhan)/.136(单卡)备选未动，先看 launch10 落地。
 
+### Session 19 突破 - ★launch10 过 update_actor!方案 B 奏效(实测峰值 28.7GB)
+
+- **监控报 `Training Progress: 1/6`——launch10 越过前 9 次全 OOM 的 update_actor 门槛，完成训练 step1！** 10 次尝试首次突破。
+- **金标准铁证**：metrics `perf/max_memory_allocated_gb: 28.704`、`max_memory_reserved_gb: 32.576`——**update_actor 实测峰值仅 28.7GB**（前 9 次 42.65GB，micro_batch 16→4 砍 14GB）。从数据证实 Session 12 诊断(峰值主要来自激活)+ 方案 B 有效。`timing_s/update_actor: 1936s` = 完整跑完没崩。
+- 健康：OOM=0、进程存活、wandb 22:33 在写、`pg_loss=-0.055 grad_norm=1.824 global_step=1 success_rate=0.086` 真在学。GPU 6,7 独占 26GB(step 间回落)、jusheng 仍未回占。
+- **进度**：step1/6，单步 ~71min(4256s，param_offload+micro_batch=4 慢但稳)。冒烟 100% 通过 = 走到 step3 存 ckpt(约 2.4h 后，约 01:00)。核心难关(OOM)已过，剩时间问题。
+- 已发飞书汇报突破。诚实定性：核心难关突破，但冒烟未 100% 完成(未到 step3 ckpt)，不过早宣布"通过"。
+
 ## Session 18 - 2026-07-05 21:59 检查点:launch10 仍健康在 val,jusheng 未回占(好兆头)
 
 - 21:59 检查点核实 launch10(方案 B, micro_batch=4, .183 卡6,7)：**健康在跑**——进程存活、wandb 21:58 刚写(23s 前)、无 OOM、val_metrics 未出(启动~55min，val 需 60-80min，仍在 val 生成)。

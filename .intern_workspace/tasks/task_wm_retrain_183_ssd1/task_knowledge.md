@@ -49,5 +49,6 @@
     - .134(20134) 5×A6000-48GB: Permission denied 无凭证。
     - .136(20136) 5×4090-49GB: 通，**gpu4 整空(49GB)**，余 ~17GB。
     - .138(20138) 5×4090: 通，5 张各 free 26-29GB(半占，单卡装不下 43GB 峰值)。
-    - .186(20186) 5×**RTX Pro6000-96GB 全空**——但 **Pro6000=96GB 正是主管要排除的那台**。
+    - .186(20186) 5×**RTX Pro6000-96GB 全空**——但 **Pro6000=96GB 正是主管要排除的那台(主管 2026-07-05 明确不用)**。
     - **矛盾**：唯一干净充裕的独占机(.186)被排除；.136 只 1 张空卡(需 TP=1 单卡，峰值43GB 余量仅 6GB)。TP 默认=2(N_GPUS/ROLLOUT_TP 可 env 覆盖)。
+37. **✅ 方案 B(micro_batch=4)实测有效——冒烟 update_actor 突破(launch10, 2026-07-05)**：`PPO_MICRO=4 LOGPROB_MICRO=4 REF_MICRO=4` env 覆盖(默认 16)，**update_actor 实测峰值 `max_memory_allocated_gb=28.704`**(前 9 次 42.65GB，砍 14GB)，越过 OOM 门槛完成 step1。证实峰值主要来自反向激活(∝batch)、非模型权重+梯度。代价：单步 ~71min(4256s，含 gen 1412s + update_actor 1936s)。**这是 .183 上唯一跑通 update_actor 的配置**。full 若沿用需主管确认(改了超参)。配合独占卡(jusheng 未回占)双保险最稳。
