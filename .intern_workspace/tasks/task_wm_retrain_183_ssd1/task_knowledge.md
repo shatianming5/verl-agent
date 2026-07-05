@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=9 -->
+<!-- METADATA:SESSION=10 -->
 
 ## Knowledge Entries
 
@@ -32,3 +32,5 @@
 22. **优先独占整卡而非共卡**：jusheng 负载会整卡撤走(观察到卡 6,7 从半占变 0MiB 全空)。整卡 49GB 时我方峰值 ~34GB 绰绰有余，无需任何 offload/降 GMU。故选卡第一优先找 used=0 的整卡；只有全被占时才共卡+降显存。整卡窗口是临时的，jusheng 可能回来，抓紧启动。
 23. **val 本来就慢，别误判龟速（修正条目20的归因）**：launch7 用 GMU0.45 整卡(KV 充足)val 仍 35min+ 未出 metrics，证明 val 慢**主因不是 KV 饿死**，而是 val 首次 vLLM 批量生成 128 局 rollout 的冷启动慢(`enforce_eager=True` 关 CUDA graph → 逐 token 慢) + ALFWorld env step。**基准：launch4(GMU0.45) 约 40min 才出 val metrics**。所以 <40min 无 metrics 属正常，别急着杀。真龟速的判据要更严：>60min 且 dresser=0。(launch5 GMU0.30 是 KV 确实太小叠加，67min 才判死。)
 24. **256 个 `ray::AlfworldWorker` 并行**：ALFWorld env 是多进程并行(非单线程 CPU 瓶颈)。val/train rollout 慢不在 env 并行度，在 vLLM 生成吞吐。
+25. **判"卡死 vs 慢"的黄金证据 = GPU 功耗**：util 99% 可能是自旋。真算功耗接近上限(4090D 上限 425W，真算 300W+)；**功耗仅 ~156-184W + util 99% = 忙等自旋/死锁**，不是真算。配合 TaskRunner `futex_wait_queue`(等锁) + dresser=0(零产出) + 日志 mtime 停 30min → 判卡死。launch7 即此：偶发 vLLM/ray 初始化死锁，同配置 launch6 能过 → 配置无罪，干净重启即可。
+26. **val-stall 哨兵设计**：针对"GPU 满载但 val 零产出"的死锁盲区，监控脚本轮询 `grep -c "is not closed"`(dresser env 交互)：>0 报健康产出、启动 45min 后仍=0 报疑似卡死、进程亡报 exit tail。比只 tail 日志更早抓到 launch7 式卡死。

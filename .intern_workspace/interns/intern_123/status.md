@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（launch7 整卡6,7 val 生成中35min，显存已解，盯 val 出 metrics） |
+| Status | Working（launch7 卡死已杀，launch8 整卡8,9 重启，val-stall 哨兵盯） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 9 |
+| Session | 10 |

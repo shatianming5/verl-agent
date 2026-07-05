@@ -1,6 +1,15 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=9 -->
+<!-- METADATA:SESSION=10 -->
+
+## Session 10 - 2026-07-05 17:47 launch7 判定卡死 → 整卡 8,9 重启 launch8
+
+- **launch7 判定卡死(非慢非OOM)**：59min、dresser=0(零 rollout 产出)、日志 mtime 卡 17:17 停 30min。硬证据：generate worker `R` 但 GPU **功耗仅 156/184W(上限425W)= 忙等自旋非真算**；TaskRunner `futex_wait_queue` 等锁；卡在 line 707(vLLM engine 初始化后首次生成),与 launch6 能过的同一位置(line704)后却不再前进。判为偶发 vLLM/ray 初始化死锁（配置无罪，launch6 同配置出过 val）。
+- 反证检验：虽 `enforce_eager` 功耗本就偏低，但 59min 连第一个 env.step 都没发生（dresser=0）超出任何合理"慢"，结论站得住。
+- **处理**：kill launch7 + ray stop(15/15) + 归档卡死日志。GPU 转好——**卡 6,7,8,9 四张全空**。
+- **重启 launch8**：避开刚卡死的 6,7，用整卡 **8,9**(启动前确认 0MiB)，GMU0.45，pid 2635598/2635615，三旋钮确认。当偶发死锁处理，干净重启。
+- **监控改进(针对新失败模式)**：加 **val-stall 哨兵**(brqfxa110)——dresser>0 报"健康产出"、45min still 0 报"疑似卡死需介入"、进程亡报 exit tail。补上 launch7「GPU满载但零产出」的盲区，不再手动 59min 查。日志监控 bzu80kd6w。
+- 显存问题已彻底解决(整卡)，当前唯一变量是 val 生成能否正常启动(launch7 偶发死锁 vs launch8 正常)。
 
 ## Session 9 - 2026-07-05 17:21 launch7(整卡6,7) 持续监督 + val 慢的再诊断
 
