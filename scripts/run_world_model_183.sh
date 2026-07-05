@@ -123,9 +123,11 @@ PPO_MINI=${PPO_MINI:-256}
 PPO_MICRO=${PPO_MICRO:-16}
 LOGPROB_MICRO=${LOGPROB_MICRO:-16}
 REF_MICRO=${REF_MICRO:-16}
-# GMU 0.30 (was 0.45): shrink vLLM KV-cache reservation so the actor-update
-# backward pass has headroom when sharing 49GB cards with jusheng (~11GB neighbor).
-GMU=${GMU:-0.30}
+# GMU 0.40 (was 0.45): trim vLLM KV-cache reservation for actor-update headroom
+# without starving val rollout. 0.30 was too aggressive — it throttled the 128-game
+# val generation to a crawl (0 progress in 67min). optimizer_offload + expandable_
+# segments do the real OOM work; GMU only needs a modest trim.
+GMU=${GMU:-0.40}
 # Offload optimizer state (Adam moments, ~6GB) to CPU during actor update — the
 # backward-pass peak is what OOM'd on cards 4,5. param stays on GPU for speed.
 OPTIMIZER_OFFLOAD=${OPTIMIZER_OFFLOAD:-True}
