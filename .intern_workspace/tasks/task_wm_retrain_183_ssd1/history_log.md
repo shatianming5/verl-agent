@@ -1,18 +1,5 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=12 -->
-
-- 判健康仍用可靠信号：wandb `.wandb` mtime + worker CPU 增量，不用 dresser。基准 val 60-80min + param_offload 更慢，约 21:00 该出 val metrics。
-
-### Session 12 终 - param_offload 也救不了:诊断突破，峰值是刚性需求
-
-- **launch9(param_offload=True)仍 update_actor OOM**（config 确认 actor param_offload=True 真启用）。PyTorch 仍占 **41.08GB**，只比不开(42.65GB)少 1.5GB——**param_offload 几乎无效**。
-- **诊断突破（根因锁定）**：FSDP 反向传播时必须把参数 all-gather 回 GPU 计算，param_offload 只省"闲置时段"，救不了**计算峰值那一刻**。所以显存旋钮(GMU/expandable_segments/optimizer_offload/param_offload)**全部无效**——峰值 ~41-43GB 是 update_actor 计算本身的**刚性需求**，不可压。
-- **OOM 触发确认**：崩溃时 GPU 6,7 又被 jusheng 回占(6 个 pid 各 ~11.5GB)。launch9 启动时 6,7 空，跑 ~55min 到 update_actor 时 jusheng 回来 → 11.5GB + 41GB > 47.38GB 爆。**空卡是间歇的，jusheng 周期性回占**。
-- **结论：`.183 + 显存旋钮`这条路走到头了**。唯一出路二选一：(a) 真正全程独占整卡（jusheng 完全不来，需主管协调或另给独占机器）；(b) 降峰值本身——减 `ppo_micro_batch_size`(16→8/4)或 `max_response_length`/`val_batch_size`，但改超参偏离原实验设置，需主管确认。
-- 清理 launch9(SSH 抖断二次补清 0 残留)+ 归档。6,7,8,9 现又全空(但会再被回占)。
-- **不再盲目重试第十次**。已达需主管决策的转折点，将发飞书完整诊断报告。
-
 <!-- METADATA:SESSION=13 -->
 
 ## Session 13 - 2026-07-05 20:40 过时 wakeup 核实（launch9 已 OOM 终结，等主管定 A/B）
@@ -30,6 +17,15 @@
 - **launch9**：pid 2689457/2689474，卡 6,7，四旋钮确认 `gmu=0.40 opt_offload=True param_offload=True alloc_conf=expandable_segments:True`。这是 8 次里防护最强配置。
 - 监控 beieg2dux(单条 tail 不重连，避免 launch8 那种刷屏风暴)，盯 val metrics/OOM/训练步/ckpt。
 - 判健康仍用可靠信号：wandb `.wandb` mtime + worker CPU 增量，不用 dresser。基准 val 60-80min + param_offload 更慢，约 21:00 该出 val metrics。
+
+### Session 12 终 - param_offload 也救不了:诊断突破，峰值是刚性需求
+
+- **launch9(param_offload=True)仍 update_actor OOM**（config 确认 actor param_offload=True 真启用）。PyTorch 仍占 **41.08GB**，只比不开(42.65GB)少 1.5GB——**param_offload 几乎无效**。
+- **诊断突破（根因锁定）**：FSDP 反向传播时必须把参数 all-gather 回 GPU 计算，param_offload 只省"闲置时段"，救不了**计算峰值那一刻**。所以显存旋钮(GMU/expandable_segments/optimizer_offload/param_offload)**全部无效**——峰值 ~41-43GB 是 update_actor 计算本身的**刚性需求**，不可压。
+- **OOM 触发确认**：崩溃时 GPU 6,7 又被 jusheng 回占(6 个 pid 各 ~11.5GB)。launch9 启动时 6,7 空，跑 ~55min 到 update_actor 时 jusheng 回来 → 11.5GB + 41GB > 47.38GB 爆。**空卡是间歇的，jusheng 周期性回占**。
+- **结论：`.183 + 显存旋钮`这条路走到头了**。唯一出路二选一：(a) 真正全程独占整卡（jusheng 完全不来，需主管协调或另给独占机器）；(b) 降峰值本身——减 `ppo_micro_batch_size`(16→8/4)或 `max_response_length`/`val_batch_size`，但改超参偏离原实验设置，需主管确认。
+- 清理 launch9(SSH 抖断二次补清 0 残留)+ 归档。6,7,8,9 现又全空(但会再被回占)。
+- **不再盲目重试第十次**。已达需主管决策的转折点，已发飞书完整诊断报告。
 
 ### Session 11 终 - launch8 update_actor OOM 定论 + 主管指示换卡/机器(排除96GB那台)
 
