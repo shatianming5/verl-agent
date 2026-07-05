@@ -1,6 +1,11 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=25 -->
+<!-- METADATA:SESSION=26 -->
+
+## Session 26 - 2026-07-06 00:50 主管「继续」→ launch10 仍 step2(无变化,健康)
+
+- 主管「继续」。核实 launch10：进度仍 step2(global_step=1，GPU 6,7 显存 31-32GB 做 update_actor)，与 5min 前(00:45)无变化。健康：OOM=0、进程存活、wandb 00:50 刚写、jusheng 未回占。ckpt 仍空。
+- 判断：慢速训练中，step3 存 ckpt 约 02:30-03:00。此阶段无实质新动作，避免冗余核实。已有 01:49 检查点 + 监控 bf1pv90sb 盯 step3+/存ckpt/OOM，让 launch10 安静跑完。
 
 ## Session 25 - 2026-07-06 00:45 主管「继续」→ launch10 仍 step2(慢但健康)
 
