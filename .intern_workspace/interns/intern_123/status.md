@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（launch10训练中step2的update_actor,健康无OOM独占,等走到step3存ckpt） |
+| Status | Working（launch10 step2完成进度2/6,进step3,健康无OOM独占,约00:55存ckpt=通过） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 21 |
+| Session | 22 |

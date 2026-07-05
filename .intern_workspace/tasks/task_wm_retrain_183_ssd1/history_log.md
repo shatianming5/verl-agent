@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=21 -->
+<!-- METADATA:SESSION=22 -->
+
+## Session 22 - 2026-07-05 23:45 监控报 step2 完成(进度 2/6,进 step3)
+
+- 监控 bnns0y7by 报 step1 详细 metrics(valid_action_ratio=0.831、kl_loss/entropy 正常=训练质量正常)。核实进度：**`Training Progress: 2/6`——step2 完成，进 step3**。
+- 全健康：OOM=0、进程存活、wandb 23:45 刚写、GPU 6,7 独占 26GB、jusheng 未回占。
+- 进度线：step1(22:26)→step2(~23:45)→**step3 正跑，约 00:55 完成存 ckpt**(SAVE_FREQ=3 触发保存)=冒烟 100% 通过。ckpt 目录仍空(step3 未完，正常)。
+- 已有 00:44 检查点 + 监控 bnns0y7by 盯 step3 存 ckpt/OOM，不空转。
 
 ## Session 21 - 2026-07-05 23:42 检查点:launch10 仍训练中(step2 的 update_actor,健康无OOM)
 
