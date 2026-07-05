@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=14 -->
+<!-- METADATA:SESSION=15 -->
 
 ## Knowledge Entries
 
@@ -42,3 +42,4 @@
 32. **⚠️⚠️⚠️ 冒烟 8 次失败最终定论：update_actor 反向峰值 ~43GB 是硬需求**。val 稳定过(test_score=0.4946)，但 actor 反向传播 PyTorch 纯真实占用 42.65GB(碎片仅 128MB)，逼近单卡 47.38GB。**GMU/expandable_segments/optimizer_offload 都救不了**——它们不动反向激活+梯度这个最大头。根治二选一：(a) `param_offload=True`(actor 参数分片卸 CPU，峰值→~30GB，代价训练 1.5-2x 慢)；(b) **独占整卡且全程不被抢**(.183 与 jusheng 共享，jusheng 会在 ~70min 后回占，是历次 OOM 主因)。主管定：优先换可独占的卡/机器，排除那台 96GB 的(疑 8xH100)。
 33. **可用机器清单缺口**：本地无 ssh config；确知只有 .183(1.14.177.180:20183, zechuan)。gpudev(10.100.2.64)/gpudev2(10.100.2.40) 故障中。Session 0「7 台机器普查」未落盘。.183 上 GPU 6-9 会周期性全空(jusheng 撤走)但也会回占，不能保证全程独占。换机器需向主管/coordinator 要清单。
 34. **⚠️⚠️⚠️ 显存旋钮全部无效——峰值是刚性需求(launch9 param_offload=True 仍 OOM 定论)**：param_offload 生效但 update_actor 仍占 41.08GB(vs 不开 42.65GB，只省 1.5GB)。原因：**FSDP 反向传播必须把 offload 的参数 all-gather 回 GPU 计算，offload 只省闲置时段、救不了计算峰值**。故 GMU/expandable_segments/optimizer_offload/param_offload 对 update_actor 峰值全部无效。峰值 ~41-43GB 是计算本身刚性需求。**唯一出路：(a) 全程独占整卡(jusheng 完全不来)；(b) 降峰值本身=减 ppo_micro_batch_size(16→8/4)/max_response_length/val_batch_size(改超参需主管批)**。.183+旋钮路线已穷尽。
+35. **可用机器唯一 = .183(2026-07-05 确认)**：探测 gpudev(10.100.2.64:24187)/gpudev2(10.100.2.40:22) 仍 Connection closed 故障未恢复。workspace 仅 2 intern(123+clade)，无其他 GPU 机凭证。`8xH100` 是文档泛指非可连机。要换独占机器必须向主管/coordinator 要清单+凭证，不能盲扫内网。→ 方案 A(独占别的机器)缺机器，实际只能靠 .183 独占整卡(不可靠，jusheng 回占) 或 方案 B(降 batch)。

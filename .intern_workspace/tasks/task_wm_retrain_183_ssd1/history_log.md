@@ -1,6 +1,15 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=14 -->
+<!-- METADATA:SESSION=15 -->
+
+## Session 15 - 2026-07-05 21:1x 主管让查别的机器空卡 → 探测确认无其他可用机器
+
+- 主管指令「看看别的机器有没有空卡」(方案 A 备选:找可独占机器)。**探测结论：除 .183 外无任何其他可用 GPU 机。**
+- gpudev(10.100.2.64:24187)/gpudev2(10.100.2.40:22)：仍 `Connection closed`，故障未恢复。
+- 搜遍 workspace（仅 2 个 intern：intern_123 + intern_clade）所有记录：**无其他 GPU 机的 ssh 凭证/IP**。`8xH100` 全是文档泛指(verl README「2 H100 训 7B」之类)，非可连机器。
+- .183 内网邻居(192.168.0.34/38/134 等)未知型号、无凭证，不盲扫内网(不安全且大概率连不上)。
+- **明确阻塞**：要用真正独占的别的机器，需主管/coordinator 提供机器清单+登录方式。已发飞书反馈。
+- 当前实际推进路线仍是 launch10(方案 B, micro_batch=4, 卡 6,7)在跑，别的机器探测是并行备选调研。
 
 ## Session 14 - 2026-07-05 21:0x 主管定方案 B → PPO_MICRO=4 降峰值 + launch10（卡 6,7）
 
