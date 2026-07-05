@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（launch9 卡6,7 param_offload兜底运行中，8次里防护最强，盯val/update_actor） |
+| Status | Working（launch9 param_offload仍OOM；显存旋钮全无效峰值刚性；待主管定独占卡或降batch） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
