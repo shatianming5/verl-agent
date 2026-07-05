@@ -11,7 +11,7 @@
 - **教训(记 ERROR_BOOK)**：**共享机绝不满占所有卡跑多 run**。ray object_store_memory=64G×N + env worker 会耗尽机器。配置搜索应串行或最多 2 点并行。
 - 冒烟已通过不受影响；配置搜索需重做(串行、不满占)。
 
-## Session 28 完 - ✅★冒烟 100% 通过!step3 存 ckpt(9 次失败后)
+### Session 28 完 - ✅★冒烟 100% 通过!step3 存 ckpt(9 次失败后)
 
 - **监控报 `Training Progress: 3/6` + `Saving model to .../global_step_3/actor/model_*.pt`——冒烟通过!** launch10(方案B micro_batch=4)完整跑通:数据→val→train step1/2/3→**权重落盘**。9 次失败后首次。
 - **★单 ckpt 体积 = 19GB**：model 分片×2=7.1GB + **optimizer 分片×2=12.3GB**(优化器状态是大头) + tokenizer/extra <0.1GB。
