@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（launch7 卡死已杀，launch8 整卡8,9 重启，val-stall 哨兵盯） |
+| Status | Working（launch8 疑同点卡死=系统性，派诊断 agent 查 vLLM 根因，盯监控） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 10 |
+| Session | 11 |

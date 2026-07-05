@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=10 -->
+<!-- METADATA:SESSION=11 -->
 
 ## Knowledge Entries
 
@@ -34,3 +34,4 @@
 24. **256 个 `ray::AlfworldWorker` 并行**：ALFWorld env 是多进程并行(非单线程 CPU 瓶颈)。val/train rollout 慢不在 env 并行度，在 vLLM 生成吞吐。
 25. **判"卡死 vs 慢"的黄金证据 = GPU 功耗**：util 99% 可能是自旋。真算功耗接近上限(4090D 上限 425W，真算 300W+)；**功耗仅 ~156-184W + util 99% = 忙等自旋/死锁**，不是真算。配合 TaskRunner `futex_wait_queue`(等锁) + dresser=0(零产出) + 日志 mtime 停 30min → 判卡死。launch7 即此：偶发 vLLM/ray 初始化死锁，同配置 launch6 能过 → 配置无罪，干净重启即可。
 26. **val-stall 哨兵设计**：针对"GPU 满载但 val 零产出"的死锁盲区，监控脚本轮询 `grep -c "is not closed"`(dresser env 交互)：>0 报健康产出、启动 45min 后仍=0 报疑似卡死、进程亡报 exit tail。比只 tail 日志更早抓到 launch7 式卡死。
+27. **val 首次生成卡死是系统性复现(launch7+launch8 连续两次同点)**，非偶发——重启救不了。判据：功耗~100W(上限425)自旋 + dresser=0 + 日志停 wandb 初始化后。**注意**：vllm dev 版不打印 "Adding requests/Processed prompts"，launch6(成功)进展行数也=0，故"无 vLLM 日志"≠卡死，别用它判据。根因待诊断 agent 结论(疑 vllm+TP2+enforce_eager 首次生成 hang)。

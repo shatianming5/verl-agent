@@ -1,6 +1,15 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=10 -->
+<!-- METADATA:SESSION=11 -->
+
+## Session 11 - 2026-07-05 18:15 launch8 疑似同点卡死 → 判为系统性非偶发 + 派诊断 agent
+
+- **修正 Session 10 的"偶发死锁"判断**：launch8(整卡 8,9)跑 27min，信号与 launch7 卡死时**完全一致**：dresser=0(零 rollout 产出)、val metrics 未出、**GPU 功耗仅 94/107W(上限 425W)**、util 45/63%。连续两次卡在同一点 = **系统性复现**，不是运气。Session 10 判"偶发、重启即可"是错的。
+- **诊断严谨性修正**：本以为"无 vLLM 生成日志"是卡死证据，但对照发现 **launch6(成功出 val)的 vLLM 进展行数也是 0** → 这个 vllm dev 版本本就不打印那些行，不能作判据。真正判据仍是功耗(自旋)+dresser=0+日志停滞。
+- **待澄清基准**：缺 launch4/launch6「启动→val metrics」的精确耗时。若它们也曾卡 27min+ 才动，则 launch8 未必真死；已派 agent 精确比对。
+- **主管建议用 agent teams**：派 1 个 general-purpose 诊断 agent(后台, a28b170f9d0d94fb6)只读诊断——算历史 val 耗时基准、对比三 run 卡点、联网查 vLLM+TP2+enforce_eager 首次生成挂起的已知 bug/workaround、查 NCCL 线索。
+- **团队粒度判断**：当前是单一串行瓶颈(冒烟未通不能铺 full)，无真正可并行子任务，故只派 1 个专职诊断 agent 而非硬拉整队(避免重复诊断+踩 SSH/GPU)。full 多 run 阶段(seed/λ 独立)才是 teams 并行价值所在。
+- launch8 三重监控(bzu80kd6w 日志 + brqfxa110 val-stall)仍在。
 
 ## Session 10 - 2026-07-05 17:47 launch7 判定卡死 → 整卡 8,9 重启 launch8
 
