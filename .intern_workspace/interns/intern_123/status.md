@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（探测6台:唯一干净空卡是被排除的96GB.186;矛盾待主管解;launch10方案B在.183跑） |
+| Status | Working（.186 排除;.9被lvqinhan占死待协调;先等launch10方案B约22:15出update_actor结果） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 16 |
+| Session | 17 |

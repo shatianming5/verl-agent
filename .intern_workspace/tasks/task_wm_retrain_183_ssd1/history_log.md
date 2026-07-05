@@ -1,6 +1,14 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=16 -->
+<!-- METADATA:SESSION=17 -->
+
+## Session 17 - 2026-07-05 21:40 主管定「不用 96G」→ .9 待协调 + launch10 健康跑向 update_actor
+
+- 主管明确「不要用 96g 的卡」→ **.186(Pro6000-96GB)硬排除**。剩下能连的最优是 .9(A100-64GB)，次选 .136 gpu4(4090 单卡)。
+- **复查 .9**：8 张仍全被 lvqinhan 占死(每张显存占 63-64GB **但 util=0%**——占着不算，可疑挂起/预留；etime 最长 22917s=6.4h)。要用 .9 必须协调 lvqinhan 释放，我无权动别人进程。
+- **launch10(方案 B, micro_batch=4, .183 卡6,7)健康跑**：进程存活、wandb 21:39 在写、无 OOM、val_metrics 未出(启动~40min，val 需 60-80min)。约 22:15 到 update_actor。
+- **决策：先等 launch10 结果**——它是当前最接近成功、且不需协调别人的路线。若 micro_batch=4 过 update_actor=冒烟通过，完全不用换机器。若 OOM，再在 .9(协调 lvqinhan)/.136(改 TP=1 单卡)间选。
+- 不擅自动 .9 的卡或改 .136。保持 launch10 监督(bnns0y7by + 检查点 21:59)。
 
 ## Session 16 - 2026-07-05 21:2x 主管给机器清单 → 探测 6 台，唯一干净空卡是被排除的 96GB .186
 
