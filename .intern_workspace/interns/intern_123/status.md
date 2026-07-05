@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（主管定full全铺.183(现8空卡);launch10仍step3约00:55存ckpt=冒烟通过） |
+| Status | Working（launch10仍step2慢但健康无OOM独占,step3存ckpt约02:30-03:00;full待冒烟通过铺.183） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 23 |
+| Session | 25 |

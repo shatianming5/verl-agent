@@ -1,6 +1,21 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=23 -->
+<!-- METADATA:SESSION=25 -->
+
+## Session 25 - 2026-07-06 00:45 主管「继续」→ launch10 仍 step2(慢但健康)
+
+- 主管连发「继续」。核实 launch10：进度仍 step2(进度条 2/6，global_step=1=完成step1在跑第2步)，GPU 6,7 显存 31-32GB=**正在 step2 的 update_actor 重计算**(同 step1 模式)。
+- 健康：OOM=0、进程存活、wandb 00:45 刚写、jusheng 未回占。ckpt 仍空(step3 才存)。
+- **进度比预期慢**：step1 完成 ~22:26，现 00:45 仍在 step2 的 update_actor，单步实际 >71min。但稳定无异常，纯慢。step3 存 ckpt 约 02:30-03:00。
+- 保持监督(监控 bf1pv90sb 盯 step3+/存ckpt/OOM)，不干预 launch10 自跑。
+
+## Session 24 - 2026-07-06 00:16 监控随上 session 断→重挂 + 修正进度认知
+
+- 上 session 退出导致后台监控 bnns0y7by 停(无完成记录)。**重挂监控 bf1pv90sb**(盯 step3+/存ckpt/OOM/done)，补上盯 step3 的死角。
+- **修正进度认知(之前偏乐观)**：`training/global_step:1`、`step:N 行数=2` → 实际**只完成 step1，在跑 step2**。进度条 "2/6" 是"正在第2步"非"step2完成"。SAVE_FREQ=3 → step3 完成存 ckpt，还需 ~2 步(~2.3h，约 02:30)。
+- `Saving=1` 是误命中(line748 `Checkpoint tracker file does not exist` 初始化正常提示 + config 的 enable_gradient_checkpointing)，**非真存 ckpt**。ckpt 目录仍空。
+- 健康：进程存活、wandb 00:14 刚写、OOM=0、jusheng 未回占。核心难关早过，纯慢。
+- 按真实进度(step3 约 02:30)设检查点，不空转。
 
 ## Session 23 - 2026-07-06 00:11 主管:full 全铺 .183 + launch10 仍在 step3
 
