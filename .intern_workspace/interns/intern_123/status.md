@@ -5,9 +5,9 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（⚠️满占10卡撑爆机器致搜索作废+launch10崩step4;但冒烟ckpt保住;已清干净;搜索需重做串行） |
+| Status | Working（串行配置搜索重做中:P1 nooff/mb4 卡8,9 短测跑起,watcher 盯 update_actor 峰值+timing;上次4点salvage确认全废需重测;机器10卡全空冒烟ckpt完好） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
 | PR | https://github.com/shatianming5/verl-agent/pull/1 |
-| Session | 29 |
+| Session | 30 |

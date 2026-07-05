@@ -1,6 +1,6 @@
 # task_wm_retrain_183_ssd1 - Task Knowledge
 
-<!-- METADATA:SESSION=29 -->
+<!-- METADATA:SESSION=30 -->
 
 ## Knowledge Entries
 
@@ -63,3 +63,4 @@
     对比各点 `timing_s/update_actor`+`max_memory_allocated_gb`，选显存<49GB(独占)/<38GB(共卡)且最快。⚠️ 满占 10 卡短测试(~1h)，盯资源勿失控。
 41. **✅ 冒烟通过 + 单 ckpt=19GB(2026-07-06 01:32, launch10)**：过 update_actor + step1/2/3 + `global_step_3` 权重落盘。**单 ckpt 19GB = model×2 7.1GB + optimizer×2 12.3GB(优化器大头) + tokenizer<0.1GB**。→ full SAVE_FREQ=15/150ep = 每run 10个×19GB=**190GB/run**，3run=**570GB**(SSD1 2.4T 装得下)。**retention=3 省到 57GB/run(171GB/3run，省~400GB)**——分支 wm183-weight-mgmt 已备。full 前须定 retention+异地备份。
 42. **⚠️ 单机 run 并发上限(2026-07-06 惨痛教训)**：.183 满占 10 卡跑 5 个 verl run → ray object_store(64G×5)+CPU/内存耗尽，`raylet memory_monitor: Got negative`，**所有 run 崩(含已通过冒烟的 launch10 崩 step4)**。配置搜索数据作废。**规则：共享机最多 2 个 run 并行，重要 run 单独隔离跑，多 run 串行**。详见 ERROR_BOOK E1。冒烟 ckpt 崩前已落盘=零损失(运气)。
+43. **配置搜索重做=串行不满占(2026-07-06 Session30, 吸取 E1)**：上次满占 4 点数据全废,salvage 崩因:①speedtest/spd_A `raylet Got negative`=机器资源耗尽非真 OOM(无峰值数据);②**spd_B CUDA graph(enforce_eager=False)与 free_cache_engine=True 不兼容→AssertionError,CUDA graph 提速 gen 这条路被挡死**(要测须同时关 free_cache_engine,KV 常驻更吃显存,暂弃);③spd_C ray plasma socket 路径 >107 字节 OSError(RAY_TMPDIR 须用短 /tmp 路径,脚本 60 字节阈值太松,ray 会追加 ~43 字节 session 子目录)。重做规则:一次 1 点,短测(2ep/VAL_BEFORE_TRAIN=False/SAVE_FREQ=999/RUN_RAY_TMPDIR=/tmp/rz_hash),读到 update_actor 峰值+timing 即杀换下一点。启动器 srch_launch.sh + watcher srch_watch.sh(实时 nvidia-smi 采峰值)。

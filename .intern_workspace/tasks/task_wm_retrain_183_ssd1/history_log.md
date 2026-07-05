@@ -1,6 +1,13 @@
 # task_wm_retrain_183_ssd1 - History Log
 
-<!-- METADATA:SESSION=29 -->
+<!-- METADATA:SESSION=30 -->
+
+## Session 30 - 2026-07-06 05:2x 主管「继续重做(串行不满占)」→ salvage 上次搜索 + 启动 P1 干净重测
+
+- 继承自 Claude(HANDOFF_FROM_CLAUDE.md 全读)。核实 .183:10 卡全空(各 48.5GB)、无 jusheng、503GB RAM/96 核、冒烟 `global_step_3` ckpt(19GB) 完好。部署脚本 md5==本地已提交(95ab10a5)。
+- Salvage 上次 4 个作废点日志,确认数据全废 + 崩因:speedtest/spd_A=`raylet Got negative` 资源耗尽(非真 OOM,无峰值数据);spd_B=CUDA graph(enforce_eager=False)与 free_cache_engine=True 不兼容 AssertionError(设计错);spd_C=ray plasma socket 路径 >107 字节 OSError(path bug)。→ 全部需干净重测。
+- 做可复用串行启动器(srch_launch.sh:2ep/跳 val/不存 ckpt/短 ray tmpdir 避 socket bug)+ watcher(srch_watch.sh:实时采峰值 + 抓 step1/OOM)。串行启动 P1 `srch_p1_nooff_mb4`(param_offload=F/opt=T/mb4,卡 8,9),旋钮核实生效,watcher 异步盯 update_actor 峰值 + timing。
+- 严守 E1:一次只 1 点,绝不满占。
 
 ## Session 29 - 2026-07-06 02:1x ⚠️失误:满占10卡撑爆机器→搜索作废+launch10被连累崩(冒烟成果保住)
 
