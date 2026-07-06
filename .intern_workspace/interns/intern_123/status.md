@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（✅串行配置搜索完成:param_offload无关+mb是唯一提速杠杆;mb8=最快独占甜点145s/38G,mb4=安全28G,mb16 OOM出局;待铺full前定备份目的地） |
+| Status | Working（✅搜索完:mb8=最快独占甜点;主管批 mb8+retention=3 铺full。⚠️jusheng 回占满10卡,mb8需38G无卡可放→detached自动启动器盯独占窗口(≥44G)自动起run1,不硬塞OOM;run2/3 待run1健康后） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
