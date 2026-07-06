@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（✅搜索完:mb8=最快独占甜点;主管批 mb8+retention=3 铺full。⚠️jusheng 回占满10卡,mb8需38G无卡可放→detached自动启动器盯独占窗口(≥44G)自动起run1,不硬塞OOM;run2/3 待run1健康后） |
+| Status | Working（主管定迁 .138(4张空48G卡)跑full;rsync复制setup(.183→.138内网,gdpo env8.2G+模型+数据~16G)进行中;完成后验证env起2个mb8 run） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
