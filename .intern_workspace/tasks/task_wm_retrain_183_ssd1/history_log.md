@@ -9,6 +9,12 @@
 - 做可复用串行启动器(srch_launch.sh:2ep/跳 val/不存 ckpt/短 ray tmpdir 避 socket bug)+ watcher(srch_watch.sh:实时采峰值 + 抓 step1/OOM)。串行启动 P1 `srch_p1_nooff_mb4`(param_offload=F/opt=T/mb4,卡 8,9),旋钮核实生效,watcher 异步盯 update_actor 峰值 + timing。
 - 严守 E1:一次只 1 点,绝不满占。
 
+### Session 30 续 — 配置搜索完成(串行,4 点干净重测)
+- 修两个测量障碍:①verl 的 `step:N - perf/... - timing_s/...` metrics 行被 tee 块缓冲卡住(tqdm 走 stderr 误导)→ 加 PYTHONUNBUFFERED=1;②首次 gen 冷启动+大 rollout 太慢 → train_batch 16→2(峰值/分项与局数无关,测量仍有效)。
+- 4 点结果(卡8,9,独占,tb2):P0b(off=T,mb4)=update_actor 252.6s/nvsmi 28.9G;P1b(off=F,mb4)=253.5s/28.9G;P2b(off=F,mb8)=**145s(快1.75x)/38.9G**;P4b(off=F,mb16)=48G→**OOM(独占也爆)**。
+- 结论:**param_offload 无关**(P0b≈P1b);**micro_batch 是唯一提速杠杆且不改结果**;mb8 是「显存达标+最快」的独占甜点,mb16 出局。gen(33%)是下一地板。详见 task_knowledge 条目 44。
+- 全程守 E1:串行、单点、每点读完即杀清理(srch_kill.sh);机器 503G/96核,单点无资源压力。
+
 ## Session 29 - 2026-07-06 02:1x ⚠️失误:满占10卡撑爆机器→搜索作废+launch10被连累崩(冒烟成果保住)
 
 - **过时 wakeup(01:49)被赶超**：它要盯的 step3 存 ckpt 上轮已达成(冒烟已通过)。

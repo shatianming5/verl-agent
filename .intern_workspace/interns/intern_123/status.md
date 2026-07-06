@@ -5,7 +5,7 @@
 | 字段 | 值 |
 |------|-----|
 | Name | intern_123 |
-| Status | Working（串行配置搜索重做中:P1 nooff/mb4 卡8,9 短测跑起,watcher 盯 update_actor 峰值+timing;上次4点salvage确认全废需重测;机器10卡全空冒烟ckpt完好） |
+| Status | Working（✅串行配置搜索完成:param_offload无关+mb是唯一提速杠杆;mb8=最快独占甜点145s/38G,mb4=安全28G,mb16 OOM出局;待铺full前定备份目的地） |
 | Role | independent |
 | Team | N/A |
 | Current Task | task_wm_retrain_183_ssd1 |
