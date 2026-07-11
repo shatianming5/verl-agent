@@ -1,4 +1,9 @@
-# Workstream B —— 世界模型指标可分性与趋势（完整协议)
+# Workstream B —— 历史 2048-task 协议（已被 3553-task 协议取代）
+
+> **不得作为当前主线证据。** 本报告虽然覆盖 11 个 checkpoint，但每点只覆盖
+> 2048/3553 个 train games，且旧分析存在 episode 聚合、cluster bootstrap、GMM
+> 映射和 probe 分组泄漏问题。当前协议要求显式 3553-game manifest、每 game
+> 至少一条轨迹、两个训练 seed，并重新生成全部统计与图。
 
 **状态：** 基线 **seed0 = `official_4to5`** 已完成(11 个 checkpoint)。seed1 验证已单独启动。
 **本报告取代**之前在 8 条轨迹冒烟集(`wm_valdump_smoke_s0_step150`)上做的全部 B 分析;那份已作废、不得引用。

@@ -1,0 +1,9 @@
+run,code_snapshot,lambda_obs,latent_loss_enabled,training_status,latent_metric_count,obs_ce_metric_count,log_or_artifact,evidence
+wm_obs_ce_l0p01_s0,ca85772:V1,0.01,false,complete,0,150,/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p01_s0_20260628_214934.log,6552a72 archived raw-log count
+wm_obs_ce_l0p01_s1,ca85772:V1,0.01,false,complete,0,150,/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p01_s1_20260628_214935.log,6552a72 archived raw-log count
+wm_obs_ce_l0p001_s0,ca85772:V1,0.001,false,complete,0,150,"/root/grpo/local_alfworld/logs/ (archived suffix _20260701_101628; exact filename unavailable while gpudev is down)",6552a72 archived raw-log count
+wm_obs_ce_l0p001_s1,ca85772:V1,0.001,false,complete,0,150,"/root/grpo/local_alfworld/logs/ (archived suffix _20260701_101628; exact filename unavailable while gpudev is down)",6552a72 archived raw-log count
+wm_obs_ce_l0p03_s0,ca85772:V1,0.03,false,partial_step15,0,not_complete,/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p03_s0_20260630_104508.log,6552a72 archived latent count
+wm_obs_ce_l0p03_s1,ca85772:V1,0.03,false,partial_step15,not_archived,not_complete,/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p03_s1_20260630_112244.log,launch path sets only lambda_obs; raw log inaccessible
+wm_obs_ce_l0p05_s0,ca85772:V1,0.05,false,partial_step15,0,not_complete,/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p05_s0_20260630_115928.log,6552a72 archived latent count
+wm_obs_ce_l0p05_s1,ca85772:V1,0.05,false,never_started,0,0,/mnt/cephfs_home_tianming.sha/grpo_alfworld/logs/run_status/wm_obs_ce_l0p05_s1.status,queued only; no training result
