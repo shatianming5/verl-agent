@@ -9,6 +9,17 @@ def test_eval10x_script_uses_short_ray_tmpdir_for_long_labels():
 
     assert "LABEL_HASH=$(printf" in text
     assert "export RAY_TMPDIR=/tmp/ray_eval_${LABEL_HASH}_${i}" in text
+
+
+def test_local_eval10x_script_is_portable_and_forces_no_predictor():
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "eval10x_alfworld_local.sh"
+    text = script.read_text(encoding="utf-8")
+
+    assert 'if [[ -f "$ENV_SH" ]]' in text
+    assert "export RAY_TMPDIR=$RAY_TMP_ROOT/ray_eval_local_${LABEL_HASH}_${i}" in text
+    assert "+actor_rollout_ref.actor.world_model.latent_use_predictor=False" in text
+    assert "+actor_rollout_ref.actor.world_model.latent_contrastive=False" in text
     assert "RAY_TMPDIR=/root/grpo/ray_tmp_${TAG}" not in text
     assert "LAMBDA_LATENT" in text
     assert "actor_rollout_ref.actor.world_model.lambda_latent=${LAMBDA_LATENT}" in text

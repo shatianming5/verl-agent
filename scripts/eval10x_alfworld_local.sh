@@ -24,6 +24,8 @@ ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.70}
 EXTRA_HYDRA_OVERRIDES=${EXTRA_HYDRA_OVERRIDES:-}
 OUT=${OUT:-$WORK/logs/eval10x_${LABEL}_results.txt}
 PREPARED_DATA_DIR=${PREPARED_DATA_DIR:-}
+ENV_SH=${ENV_SH:-/root/grpo/env.sh}
+RAY_TMP_ROOT=${RAY_TMP_ROOT:-/tmp}
 
 append_hydra_override() {
   if [[ -n "$EXTRA_HYDRA_OVERRIDES" ]]; then
@@ -60,7 +62,12 @@ if [[ -n "$EXTRA_HYDRA_OVERRIDES" ]]; then
   extra_hydra_args=($EXTRA_HYDRA_OVERRIDES)
 fi
 
-source /root/grpo/env.sh
+if [[ -f "$ENV_SH" ]]; then
+  # Optional machine-local environment exports used by the original gpudev setup.
+  # Explicit WORK/REPO/MODEL/VENV/ALFWORLD_DATA values remain authoritative.
+  # shellcheck source=/dev/null
+  source "$ENV_SH"
+fi
 
 export WORK REPO MODEL VENV ALFWORLD_DATA CUDA_VISIBLE_DEVICES
 export PYTHONPATH=$REPO:${PYTHONPATH:-}
@@ -108,7 +115,7 @@ LABEL_HASH=$(printf "%s" "$LABEL" | cksum | awk '{print $1}')
 
 for i in $(seq 0 $((N_EVALS - 1))); do
   TAG=eval10x_${LABEL}_${i}
-  export RAY_TMPDIR=/root/grpo/ray_eval_local_${LABEL_HASH}_${i}
+  export RAY_TMPDIR=$RAY_TMP_ROOT/ray_eval_local_${LABEL_HASH}_${i}
   mkdir -p "$RAY_TMPDIR"
   CLEAN_DATA_DIR=0
   if [[ -n "$PREPARED_DATA_DIR" ]]; then
