@@ -53,25 +53,31 @@ wm_obs_ce_l0p05_s1    : latent=0
 predictor 实现，不得进入主线结论。原始 gpudev/cephfs 当前不可达，未删除或改写任何
 原始 artifact；可访问的镜像目录另放置 `PREDICTOR_ONLY.md` 标记。
 
-### `.136` no-predictor 重跑
+### `.136` no-predictor 重跑与 silent-no-latent 纠错
 
 `.136` 运行副本的 `dp_actor.py` blob
 `5a495ea15b1a30b28c12e41e598913c8bd05b4bb` 与已推送
 `5bbbbb986be3a068ed572066976dbcf8c5c22306` 完全一致；runner 工作树 blob
 `1cfd06b179b6e54c143e3b62a81811e1769a8454` 也与该提交一致。训练日志 resolved
-config 明确记录 `latent_use_predictor: False`。
+config 明确记录 `latent_use_predictor: False`。但 2026-07-12 审计发现
+`dp_actor.update_policy()` 当时只有 `world_model_predictor is not None` 才把 latent
+tensor 选入 minibatch；所以 predictor=false 时 latent loss 被静默跳过。修复 commit
+为 `5667ec25475a24631855443152b32505beac9dc3`。
 
 | workstream | 完整 run 名 | 训练代码 | λ | predictor | 状态与数字 | artifacts |
 |---|---|---|---|---|---|---|
-| C latent | `wmlatnp_l0p001_s0` | `f809747c22fab41109bf54dc5d14d95c8c3e2922` + 上述两个 worktree blob（等价于 `5bbbbb9` 的训练实现） | λ_latent=0.001 | OFF | 150/150；最终 val success rate=0.750 | `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/full_wmlatnp_l0p001_s0.log`；`/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlatnp_l0p001_s0/global_step_150` |
-| C latent | `wmlatnp_l0p001_s1` | 同上 | λ_latent=0.001 | OFF | 150/150；最终 val success rate=0.640625 | `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/full_wmlatnp_l0p001_s1.log`；`/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlatnp_l0p001_s1/global_step_150` |
-| C latent | `wmlatnp_l0p005_s0` | `208560695c0dbc39d76bcff57a4c94720a1cd34d` | λ_latent=0.005 | OFF（强制 guard） | 2026-07-12 07:32 CST 从零重启；此前被主管叫停的无 checkpoint 部分日志已保留 | `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/full_wmlatnp_l0p005_s0.log`；停止副本 `full_wmlatnp_l0p005_s0.stopped_by_supervisor_20260712_071414_nopredictor.log`；checkpoint root `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlatnp_l0p005_s0` |
-| C latent | `wmlatnp_l0p005_s1` | `208560695c0dbc39d76bcff57a4c94720a1cd34d` | λ_latent=0.005 | OFF（强制 guard） | 串行排队在 `wmlatnp_l0p005_s0` 后 | checkpoint root `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlatnp_l0p005_s1` |
+| invalid C control | `wmlatnp_l0p001_s0` | `f809747c22fab41109bf54dc5d14d95c8c3e2922` + 上述两个 worktree blob | λ_latent 配置值=0.001，但实际 latent loss 未进入 minibatch | OFF | **无效 C run**：150/150，latent metric count=0；val success rate=0.750 只能作 silent-no-latent 工程对照 | `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/full_wmlatnp_l0p001_s0.log`；`/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlatnp_l0p001_s0/global_step_150` |
+| invalid C control | `wmlatnp_l0p001_s1` | 同上 | λ_latent 配置值=0.001，但实际 latent loss 未进入 minibatch | OFF | **无效 C run**：150/150，latent metric count=0；val success rate=0.640625 只能作 silent-no-latent 工程对照 | `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/full_wmlatnp_l0p001_s1.log`；`/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlatnp_l0p001_s1/global_step_150` |
+| invalid C control | `wmlatnp_l0p005_s0` | `208560695c0dbc39d76bcff57a4c94720a1cd34d` | λ_latent 配置值=0.005，但实际 latent loss 未进入 minibatch | OFF | **无效 C run**：在 step1 前停掉；无 checkpoint | `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/full_wmlatnp_l0p005_s0.invalid_no_latent_loss_20260712_0745.log` |
+| C latent | `wmlatnp_direct_l0p001_s0` | `5667ec25475a24631855443152b32505beac9dc3` | λ_latent=0.001 | OFF（强制 guard） | 从零重跑 | checkpoint root `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlatnp_direct_l0p001_s0` |
+| C latent | `wmlatnp_direct_l0p001_s1` | `5667ec25475a24631855443152b32505beac9dc3` | λ_latent=0.001 | OFF（强制 guard） | 串行排队 | checkpoint root `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlatnp_direct_l0p001_s1` |
+| C latent | `wmlatnp_direct_l0p005_s0` | `5667ec25475a24631855443152b32505beac9dc3` | λ_latent=0.005 | OFF（强制 guard） | 串行排队 | checkpoint root `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlatnp_direct_l0p005_s0` |
+| C latent | `wmlatnp_direct_l0p005_s1` | `5667ec25475a24631855443152b32505beac9dc3` | λ_latent=0.005 | OFF（强制 guard） | 串行排队 | checkpoint root `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlatnp_direct_l0p005_s1` |
 
-上述四个 run 的 exact command、checkpoint root、eval10x result 路径由
-`/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/c_nopredictor_runs_2085606.tsv`
+上述四个有效主线 run 的 exact command、checkpoint root、eval10x result 路径由
+`/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/c_nopredictor_runs_5667ec2.tsv`
 与 `c_nopredictor_seq_136.log` 记录。eval10x 统一由代码
-`208560695c0dbc39d76bcff57a4c94720a1cd34d` 执行。
+`5667ec25475a24631855443152b32505beac9dc3` 执行。
 
 ### Workstream B 旧冒烟诊断作废
 
