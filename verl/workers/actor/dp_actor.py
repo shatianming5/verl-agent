@@ -413,12 +413,28 @@ class DataParallelPPOActor(BasePPOActor):
         with torch.no_grad():
             plain_cos = F.cosine_similarity(pred_hidden.float(), obs_hidden.float(), dim=-1)
             any_valid = bool(valid.any().item())
+            valid_action = action_hidden.float()[valid]
+            valid_pred = pred_hidden.float()[valid]
+            valid_obs = obs_hidden.float()[valid]
+            action_norm = valid_action.norm(dim=-1).mean().item() if any_valid else 0.0
+            pred_norm = valid_pred.norm(dim=-1).mean().item() if any_valid else 0.0
+            obs_norm = valid_obs.norm(dim=-1).mean().item() if any_valid else 0.0
+            action_feature_var = (
+                (valid_action - valid_action.mean(dim=0, keepdim=True)).pow(2).mean().item() if any_valid else 0.0
+            )
+            obs_feature_var = (
+                (valid_obs - valid_obs.mean(dim=0, keepdim=True)).pow(2).mean().item() if any_valid else 0.0
+            )
             metrics = {
                 "actor/wm_latent_loss": latent_loss.detach().item(),
                 "actor/wm_cosine": plain_cos[valid].mean().detach().item() if any_valid else 0.0,
                 "actor/wm_valid": valid_count.detach().item(),
-                "actor/wm_pred_norm": pred_hidden.float()[valid].norm(dim=-1).mean().detach().item() if any_valid else 0.0,
-                "actor/wm_target_norm": obs_hidden.float()[valid].norm(dim=-1).mean().detach().item() if any_valid else 0.0,
+                "actor/wm_pred_norm": pred_norm,
+                "actor/wm_target_norm": obs_norm,
+                "world_model/latent_action_norm": action_norm,
+                "world_model/latent_obs_norm": obs_norm,
+                "world_model/latent_action_feature_var": action_feature_var,
+                "world_model/latent_obs_feature_var": obs_feature_var,
             }
             if use_contrastive and pos_cos is not None:
                 metrics["actor/wm_pos_cosine"] = pos_cos.item()

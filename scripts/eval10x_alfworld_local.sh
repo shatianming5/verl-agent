@@ -47,13 +47,11 @@ fi
 if [[ -n "${LAMBDA_LATENT:-}" ]]; then
   LATENT_MAX_LENGTH=${LATENT_MAX_LENGTH:-512}
   LATENT_TARGET=${LATENT_TARGET:-text}
-  LATENT_PREDICTOR_HIDDEN_SIZE=${LATENT_PREDICTOR_HIDDEN_SIZE:-0}
-  LATENT_PREDICTOR_DROPOUT=${LATENT_PREDICTOR_DROPOUT:-0.0}
   append_hydra_override "actor_rollout_ref.actor.world_model.lambda_latent=${LAMBDA_LATENT}"
   append_hydra_override "actor_rollout_ref.actor.world_model.latent_max_length=${LATENT_MAX_LENGTH}"
   append_hydra_override "actor_rollout_ref.actor.world_model.latent_target=${LATENT_TARGET}"
-  append_hydra_override "actor_rollout_ref.actor.world_model.latent_predictor_hidden_size=${LATENT_PREDICTOR_HIDDEN_SIZE}"
-  append_hydra_override "actor_rollout_ref.actor.world_model.latent_predictor_dropout=${LATENT_PREDICTOR_DROPOUT}"
+  append_hydra_override "+actor_rollout_ref.actor.world_model.latent_use_predictor=False"
+  append_hydra_override "+actor_rollout_ref.actor.world_model.latent_contrastive=False"
 fi
 
 extra_hydra_args=()

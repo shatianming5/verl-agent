@@ -123,7 +123,9 @@ def test_latent_loss_stop_gradient_target_and_masks_rows(monkeypatch):
     actor = object.__new__(module.DataParallelPPOActor)
     actor.actor_module = ToyActor()
     actor.world_model_predictor = torch.nn.Linear(4, 4, bias=False)
+    actor.latent_world_model_enabled = True
     actor.device_name = "cpu"
+    actor.config = {"world_model": {"latent_contrastive": False}}
     with torch.no_grad():
         actor.world_model_predictor.weight.copy_(torch.eye(4))
 
@@ -148,6 +150,54 @@ def test_latent_loss_stop_gradient_target_and_masks_rows(monkeypatch):
     torch.testing.assert_close(embedding_grad[7], torch.zeros_like(embedding_grad[7]))
     torch.testing.assert_close(embedding_grad[9], torch.zeros_like(embedding_grad[9]))
     assert predictor_grad.norm().item() > 0.0
+
+
+def test_no_predictor_latent_loss_reports_collapse_metrics(monkeypatch):
+    module = _load_dp_actor_module(monkeypatch)
+
+    class ToyActor(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embedding = torch.nn.Embedding(16, 4)
+            with torch.no_grad():
+                self.embedding.weight.zero_()
+                self.embedding.weight[3] = torch.tensor([1.0, 0.0, 0.0, 0.0])
+                self.embedding.weight[5] = torch.tensor([0.0, 0.0, 1.0, 0.0])
+                self.embedding.weight[7] = torch.tensor([0.0, 1.0, 0.0, 0.0])
+                self.embedding.weight[9] = torch.tensor([0.0, 0.0, 0.0, 1.0])
+
+        def forward(self, input_ids, attention_mask=None, position_ids=None, **kwargs):
+            return types.SimpleNamespace(hidden_states=(self.embedding(input_ids),))
+
+    actor = object.__new__(module.DataParallelPPOActor)
+    actor.actor_module = ToyActor()
+    actor.world_model_predictor = None
+    actor.latent_world_model_enabled = True
+    actor.device_name = "cpu"
+    actor.config = {"world_model": {"latent_contrastive": False}}
+
+    micro_batch = {
+        "wm_input_ids": torch.tensor([[2, 3, 4, 5], [6, 7, 8, 9]]),
+        "wm_attention_mask": torch.ones(2, 4, dtype=torch.long),
+        "wm_position_ids": torch.arange(4).expand(2, -1),
+        "wm_action_end_idx": torch.tensor([1, 1]),
+        "wm_obs_end_idx": torch.tensor([3, 3]),
+        "wm_loss_mask": torch.ones(2),
+    }
+
+    latent_loss, metrics = actor._compute_latent_world_model_loss(micro_batch)
+    latent_loss.backward()
+
+    embedding_grad = actor.actor_module.embedding.weight.grad
+    assert embedding_grad[3].norm().item() > 0.0
+    assert embedding_grad[7].norm().item() > 0.0
+    torch.testing.assert_close(embedding_grad[5], torch.zeros_like(embedding_grad[5]))
+    torch.testing.assert_close(embedding_grad[9], torch.zeros_like(embedding_grad[9]))
+    assert metrics["actor/wm_pred_norm"] == metrics["world_model/latent_action_norm"]
+    assert metrics["world_model/latent_action_norm"] == 1.0
+    assert metrics["world_model/latent_obs_norm"] == 1.0
+    assert metrics["world_model/latent_action_feature_var"] == 0.125
+    assert metrics["world_model/latent_obs_feature_var"] == 0.125
 
 
 def test_extra_state_dict_saves_world_model_predictor_config(monkeypatch):

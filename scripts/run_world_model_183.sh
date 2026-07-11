@@ -79,6 +79,7 @@ ROLLOUT_DATA_DIR=${ROLLOUT_DATA_DIR:-$WORK/logs/world_model_rollouts/${TAG}_seed
 mkdir -p "$ROLLOUT_DATA_DIR"
 
 WM_ARGS=()
+WM_INVARIANT_ARGS=()
 case "$KIND" in
   latent)
     LATENT_MAX_LENGTH=${LATENT_MAX_LENGTH:-512}
@@ -88,8 +89,11 @@ case "$KIND" in
       actor_rollout_ref.actor.world_model.lambda_latent="$VALUE"
       actor_rollout_ref.actor.world_model.latent_max_length="$LATENT_MAX_LENGTH"
       actor_rollout_ref.actor.world_model.latent_target="$LATENT_TARGET"
-      +actor_rollout_ref.actor.world_model.latent_use_predictor=False
       trainer.rollout_data_dir="$ROLLOUT_DATA_DIR"
+    )
+    WM_INVARIANT_ARGS+=(
+      +actor_rollout_ref.actor.world_model.latent_use_predictor=False
+      +actor_rollout_ref.actor.world_model.latent_contrastive=False
     )
     ;;
   obs_ce)
@@ -228,6 +232,7 @@ disable_proxy_for_ray
   trainer.max_critic_ckpt_to_keep=null \
   "${WM_ARGS[@]}" \
   "${EXTRA_HYDRA_ARGS[@]}" \
+  "${WM_INVARIANT_ARGS[@]}" \
   2>&1 | tee -a "$LOG"
 
 if [[ -n "$CKPT_BACKUP_DEST" ]]; then
