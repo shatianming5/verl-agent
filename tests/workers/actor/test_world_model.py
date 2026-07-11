@@ -200,6 +200,26 @@ def test_no_predictor_latent_loss_reports_collapse_metrics(monkeypatch):
     assert metrics["world_model/latent_obs_feature_var"] == 0.125
 
 
+def test_no_predictor_selects_latent_batch_for_actor_update(monkeypatch):
+    module = _load_dp_actor_module(monkeypatch)
+    actor = object.__new__(module.DataParallelPPOActor)
+    actor.world_model_predictor = None
+    actor.latent_world_model_enabled = True
+    keys = {
+        "wm_input_ids": torch.empty(0),
+        "wm_attention_mask": torch.empty(0),
+        "wm_position_ids": torch.empty(0),
+        "wm_action_end_idx": torch.empty(0),
+        "wm_obs_end_idx": torch.empty(0),
+        "wm_loss_mask": torch.empty(0),
+    }
+
+    selected = actor._latent_world_model_batch_keys(keys)
+
+    assert selected == list(keys)
+    assert actor._has_latent_world_model_batch(keys)
+
+
 def test_extra_state_dict_saves_world_model_predictor_config(monkeypatch):
     module = _load_dp_actor_module(monkeypatch)
     actor = object.__new__(module.DataParallelPPOActor)

@@ -239,8 +239,11 @@ class DataParallelPPOActor(BasePPOActor):
         return optimizer_state_dict
 
     def _has_latent_world_model_batch(self, micro_batch) -> bool:
+        return bool(self._latent_world_model_batch_keys(micro_batch))
+
+    def _latent_world_model_batch_keys(self, micro_batch) -> list[str]:
         if not self.latent_world_model_enabled:
-            return False
+            return []
         legacy_keys = [
             "wm_input_ids",
             "wm_attention_mask",
@@ -257,7 +260,11 @@ class DataParallelPPOActor(BasePPOActor):
             "wm_latent_obs_pos",
             "wm_latent_loss_mask",
         ]
-        return all(key in micro_batch for key in legacy_keys) or all(key in micro_batch for key in named_keys)
+        if all(key in micro_batch for key in legacy_keys):
+            return legacy_keys
+        if all(key in micro_batch for key in named_keys):
+            return named_keys
+        return []
 
     def _get_latent_world_model_batch(self, micro_batch):
         if "wm_input_ids" in micro_batch:
@@ -726,29 +733,9 @@ class DataParallelPPOActor(BasePPOActor):
             "wm_obs_position_ids",
             "wm_obs_loss_mask",
         ]
-        latent_legacy_keys = [
-            "wm_input_ids",
-            "wm_attention_mask",
-            "wm_position_ids",
-            "wm_action_end_idx",
-            "wm_obs_end_idx",
-            "wm_loss_mask",
-        ]
-        latent_named_keys = [
-            "wm_latent_input_ids",
-            "wm_latent_attention_mask",
-            "wm_latent_position_ids",
-            "wm_latent_action_pos",
-            "wm_latent_obs_pos",
-            "wm_latent_loss_mask",
-        ]
         if self._obs_ce_enabled() and all(key in data.batch.keys() for key in obs_ce_keys):
             select_keys.extend(obs_ce_keys)
-        if self.world_model_predictor is not None:
-            if all(key in data.batch.keys() for key in latent_legacy_keys):
-                select_keys.extend(latent_legacy_keys)
-            elif all(key in data.batch.keys() for key in latent_named_keys):
-                select_keys.extend(latent_named_keys)
+        select_keys.extend(self._latent_world_model_batch_keys(data.batch))
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
