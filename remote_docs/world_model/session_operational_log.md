@@ -203,3 +203,20 @@ gpudev 上三级 chain 全部就绪:
   * **数据安全评估**:C run ckpt(每 15 step)+ seed1 dumps(10/11)在 **cephfs 共享盘**(非 gpudev 本地)——若 cephfs 完好则无损、可从最近 ckpt 续跑;**B seed0 报告已在 GitHub(commit e7ef115,绝对安全)**。只丢在途算力(可 resume)。
   * 失联前状态(05:48 CST):seed1 rollout 10/11(step135 跑中);C runs s0 step113/s1 step121(val0.641)/l0p005_s0 step102(val0.602)。
   * 计划:每 tick 重试连通;恢复后①查 cephfs 存活②从最近 ckpt 重启死掉的 job③seed1 只剩 step150。不 spam 重试(无助恢复)。
+
+## 2026-07-13 C 线有效重跑进度与 ETA
+
+- `wmlatnp_direct_l0p001_s0`（commit
+  `5667ec25475a24631855443152b32505beac9dc3`）于 02:05 CST 到
+  `global_step=40`，进度条 `41/150`，当前 run 剩余约 `47:21:50`。
+- 最新有效指标：latent loss `0.175`、action/obs feature variance
+  `3.137/4.130`、peak allocated `35.211GB`；无 OOM/NaN/traceback。
+- 已落盘 `global_step_15`、`global_step_30`。权威日志：
+  `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/full_wmlatnp_direct_l0p001_s0.log`。
+- 按当前平均 `1564s/step` 估算：当前 run 约 47 小时；其余三个
+  `wmlatnp_direct_*` 训练约 65 小时/run，C 全训练加四个 eval10x
+  合计尚需约 10–11 天（无中断前提）。
+- gpudev 仍 connection closed、gpudev2 timeout；B full protocol 代码已在
+  `839dbf6566420fa000ee75fad96b710193a0dd29`，但 baseline checkpoint
+  不可达，因此 B 科学 rollout/图/CSV 仍 blocked。历史 8-episode 与
+  2048-task 报告均已 superseded，不作为当前证据。
