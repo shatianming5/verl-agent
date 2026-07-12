@@ -211,3 +211,81 @@ def test_dump_world_model_transitions_skips_non_world_model_batches(tmp_path, mo
 
     assert trainer._dump_world_model_transitions(batch=batch, dump_path=str(tmp_path)) is None
     assert list(tmp_path.iterdir()) == []
+
+
+def test_full_protocol_dump_requires_and_preserves_manifest_metadata(tmp_path, monkeypatch):
+    module = _load_ray_trainer_module(monkeypatch)
+    trainer = object.__new__(module.RayPPOTrainer)
+    trainer.global_steps = 15
+    trainer.config = {
+        "trainer": {
+            "world_model_dump_protocol": "workstream_b_full_train_v2",
+            "world_model_diagnostic_checkpoint_step": "15",
+        },
+        "actor_rollout_ref": {
+            "rollout": {
+                "temperature": 1.0,
+                "top_p": 1.0,
+                "top_k": -1,
+                "do_sample": True,
+                "val_kwargs": {
+                    "temperature": 1.0,
+                    "top_p": 1.0,
+                    "top_k": -1,
+                    "do_sample": True,
+                    "n": 1,
+                },
+            }
+        },
+    }
+    metadata = {
+        "wm_game_id": "game-a",
+        "wm_gamefile": "/data/game-a/game.tw-pddl",
+        "wm_task_type": "pick_and_place_simple",
+        "wm_game_sha256": "a" * 64,
+        "wm_manifest_sha256": "b" * 64,
+        "wm_schedule_index": 0,
+        "wm_schedule_padding": False,
+        "wm_trajectory_index": 0,
+        "wm_episode_id": "episode-a",
+    }
+    batch = types.SimpleNamespace(
+        batch={},
+        non_tensor_batch={
+            "traj_uid": np.array(["episode-a"], dtype=object),
+            "wm_step_idx": np.array([0]),
+            "wm_prev_obs_text": np.array(["room"], dtype=object),
+            "wm_action_text": np.array(["look"], dtype=object),
+            "wm_next_obs_text": np.array(["room"], dtype=object),
+            "episode_rewards": np.array([10.0]),
+            **{key: np.array([value], dtype=object) for key, value in metadata.items()},
+        },
+    )
+
+    filename = trainer._dump_world_model_transitions(
+        batch=batch,
+        dump_path=str(tmp_path),
+        split="train",
+        score_tensor=torch.tensor([10.0]),
+    )
+
+    row = json.loads(Path(filename).read_text(encoding="utf-8"))
+    assert row["schema_version"] == "wm_transition_v2"
+    assert row["workstream_b_protocol"] == "workstream_b_full_train_v2"
+    assert row["wm_game_id"] == "game-a"
+    assert row["wm_episode_id"] == row["traj_uid"] == "episode-a"
+    assert row["rollout_checkpoint_step"] == "15"
+    assert row["rollout_temperature"] == 1.0
+    assert row["rollout_top_k"] == -1
+    assert row["score"] == 10.0
+
+
+def test_episode_success_prefers_trajectory_reward_over_batch_success_rate(monkeypatch):
+    module = _load_ray_trainer_module(monkeypatch)
+
+    assert module.RayPPOTrainer._infer_episode_success(
+        {"episode_rewards": 0.0, "success_rate": 0.5}
+    ) is False
+    assert module.RayPPOTrainer._infer_episode_success(
+        {"episode_rewards": 10.0, "success_rate": 0.0}
+    ) is True

@@ -683,17 +683,27 @@ class RayPPOTrainer:
         return values
 
     @staticmethod
+    def _config_value(config, key, default=None):
+        if config is None:
+            return default
+        if hasattr(config, "get"):
+            return config.get(key, default)
+        return getattr(config, key, default)
+
+    @staticmethod
     def _infer_episode_success(row):
+        try:
+            if row.get("episode_rewards") is not None:
+                return float(row["episode_rewards"]) > 0.0
+        except (TypeError, ValueError):
+            pass
         for key, value in row.items():
             if "success_rate" in key:
                 try:
                     return float(value) > 0.0
                 except (TypeError, ValueError):
                     pass
-        try:
-            return float(row.get("episode_rewards", 0.0)) > 0.0
-        except (TypeError, ValueError):
-            return None
+        return None
 
     @staticmethod
     def _score_rows(score_tensor):
@@ -734,6 +744,49 @@ class RayPPOTrainer:
         scores = self._score_rows(score_tensor)
         if scores is None and hasattr(batch, "batch") and "token_level_scores" in batch.batch:
             scores = self._score_rows(batch.batch["token_level_scores"])
+        transition_scores = scores
+
+        trainer_config = self._config_value(getattr(self, "config", None), "trainer", {})
+        protocol = self._config_value(trainer_config, "world_model_dump_protocol", "")
+        checkpoint_step = self._config_value(
+            trainer_config,
+            "world_model_diagnostic_checkpoint_step",
+            self.global_steps,
+        )
+        full_metadata_keys = {
+            "wm_game_id",
+            "wm_gamefile",
+            "wm_task_type",
+            "wm_game_sha256",
+            "wm_manifest_sha256",
+            "wm_schedule_index",
+            "wm_schedule_padding",
+            "wm_trajectory_index",
+            "wm_episode_id",
+        }
+        full_protocol = protocol == "workstream_b_full_train_v2"
+        if full_protocol:
+            missing_metadata = full_metadata_keys - set(non_tensor_batch)
+            if missing_metadata:
+                raise ValueError(
+                    "Full Workstream B dump is missing scheduled ALFWorld metadata: "
+                    f"{sorted(missing_metadata)}"
+                )
+            if split != "train":
+                raise ValueError(f"Full Workstream B dump must use split='train', got {split!r}")
+            episode_rewards = non_tensor_batch.get("episode_rewards")
+            if episode_rewards is None:
+                raise ValueError("Full Workstream B dump requires episode_rewards as its trajectory score")
+            scores = [
+                self._json_safe(self._row_value(episode_rewards, idx))
+                for idx in range(n)
+            ]
+            if len(scores) != n:
+                raise ValueError(f"Full Workstream B score count={len(scores)} does not match rows={n}")
+            if transition_scores is not None and len(transition_scores) != n:
+                raise ValueError(
+                    f"Full Workstream B transition score count={len(transition_scores)} does not match rows={n}"
+                )
 
         metadata_keys = {
             "uid",
@@ -746,13 +799,44 @@ class RayPPOTrainer:
             "episode_rewards",
             "episode_lengths",
             "tool_callings",
+            *full_metadata_keys,
+        }
+
+        rollout_config = self._config_value(
+            self._config_value(getattr(self, "config", None), "actor_rollout_ref", {}),
+            "rollout",
+            {},
+        )
+        val_kwargs = self._config_value(rollout_config, "val_kwargs", {})
+        decoding = {
+            "rollout_temperature": self._config_value(
+                val_kwargs,
+                "temperature",
+                self._config_value(rollout_config, "temperature", None),
+            ),
+            "rollout_top_p": self._config_value(
+                val_kwargs,
+                "top_p",
+                self._config_value(rollout_config, "top_p", None),
+            ),
+            "rollout_top_k": self._config_value(
+                val_kwargs,
+                "top_k",
+                self._config_value(rollout_config, "top_k", None),
+            ),
+            "rollout_do_sample": self._config_value(
+                val_kwargs,
+                "do_sample",
+                self._config_value(rollout_config, "do_sample", None),
+            ),
+            "rollout_n": self._config_value(val_kwargs, "n", 1),
         }
 
         mode = "a" if append else "w"
         with open(filename, mode) as f:
             for idx in range(n):
                 row = {
-                    "schema_version": "wm_transition_v1",
+                    "schema_version": "wm_transition_v2" if full_protocol else "wm_transition_v1",
                     "global_step": self.global_steps,
                     "split": split,
                     "row_idx": row_offset + idx,
@@ -760,10 +844,16 @@ class RayPPOTrainer:
                     "wm_action_text": self._json_safe(self._row_value(non_tensor_batch["wm_action_text"], idx)),
                     "wm_next_obs_text": self._json_safe(self._row_value(non_tensor_batch["wm_next_obs_text"], idx)),
                 }
+                if full_protocol:
+                    row["workstream_b_protocol"] = protocol
+                    row["rollout_checkpoint_step"] = str(checkpoint_step)
+                    row.update({key: self._json_safe(value) for key, value in decoding.items()})
                 if batch_idx is not None:
                     row["batch_idx"] = batch_idx
                 if scores is not None:
                     row["score"] = self._json_safe(scores[idx])
+                if full_protocol and transition_scores is not None:
+                    row["transition_reward_score"] = self._json_safe(transition_scores[idx])
                 for key, values in non_tensor_batch.items():
                     if key in metadata_keys or "success_rate" in key:
                         row[key] = self._json_safe(self._row_value(values, idx))
@@ -811,6 +901,7 @@ class RayPPOTrainer:
         sample_outputs = []
         sample_scores = []
         validation_data_dir = self.config.trainer.get("validation_data_dir", None)
+        validation_dump_split = self.config.trainer.get("validation_dump_split", "val")
         validation_dump_row_offset = 0
 
         for validation_batch_idx, test_data in enumerate(self.val_dataloader):
@@ -886,7 +977,7 @@ class RayPPOTrainer:
                 dumped = self._dump_world_model_transitions(
                     batch=test_batch,
                     dump_path=validation_data_dir,
-                    split="val",
+                    split=validation_dump_split,
                     append=validation_dump_row_offset > 0,
                     row_offset=validation_dump_row_offset,
                     batch_idx=validation_batch_idx,

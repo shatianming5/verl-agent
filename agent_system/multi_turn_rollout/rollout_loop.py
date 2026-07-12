@@ -13,18 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+import uuid
+from typing import Dict, List
+
 import numpy as np
+import torch
+from transformers import PreTrainedTokenizer
+
+import verl.utils.torch_functional as verl_F
+from agent_system.environments import EnvironmentManagerBase
+from agent_system.multi_turn_rollout.utils import filter_group_data, process_image, to_list_of_dict, torch_to_numpy
 from verl import DataProto
+from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from verl.utils.dataset.rl_dataset import collate_fn
 from verl.utils.model import compute_position_id_with_mask
-import verl.utils.torch_functional as verl_F
-from transformers import PreTrainedTokenizer
-import uuid
-from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
-from agent_system.environments import EnvironmentManagerBase
-from typing import List, Dict
-from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 
 
 def _get_config_value(config, key: str, default=None):
@@ -39,6 +41,19 @@ def _object_array_from_optional_text(values, batch_size: int):
     if values is None:
         return np.array(["" for _ in range(batch_size)], dtype=object)
     return np.array([str(value) if value is not None else "" for value in values], dtype=object)
+
+
+WORKSTREAM_B_METADATA_KEYS = (
+    "wm_game_id",
+    "wm_gamefile",
+    "wm_task_type",
+    "wm_game_sha256",
+    "wm_manifest_sha256",
+    "wm_schedule_index",
+    "wm_schedule_padding",
+    "wm_trajectory_index",
+    "wm_episode_id",
+)
 
 
 class TrajectoryCollector:
@@ -280,7 +295,7 @@ class TrajectoryCollector:
         if obs_text is not None:
             obs_content += obs_text
         else:
-            print(f"Warning: No text observation found!")
+            print("Warning: No text observation found!")
 
         
         chat = np.array([{
@@ -505,6 +520,10 @@ class TrajectoryCollector:
 
         lenght_obs = len(obs['text']) if obs['text'] is not None else len(obs['image'])
         assert len(gen_batch.batch) == lenght_obs, f"gen_batch size {len(gen_batch.batch)} does not match obs size {lenght_obs}"
+        scheduled_metadata = {}
+        if infos and all(all(key in info for key in WORKSTREAM_B_METADATA_KEYS) for info in infos):
+            for key in WORKSTREAM_B_METADATA_KEYS:
+                scheduled_metadata[key] = np.array([info[key] for info in infos], dtype=object)
         
         if self.config.env.rollout.n > 0: # env grouping
             uid_batch = []
@@ -517,7 +536,10 @@ class TrajectoryCollector:
             uid = str(uuid.uuid4())
             uid_batch = np.array([uid for _ in range(len(gen_batch.batch))], dtype=object)
         is_done = np.zeros(batch_size, dtype=bool)
-        traj_uid = np.array([str(uuid.uuid4()) for _ in range(batch_size)], dtype=object)
+        if "wm_episode_id" in scheduled_metadata:
+            traj_uid = scheduled_metadata["wm_episode_id"].copy()
+        else:
+            traj_uid = np.array([str(uuid.uuid4()) for _ in range(batch_size)], dtype=object)
         total_batch_list = [[] for _ in range(batch_size)]
         total_infos = [[] for _ in range(batch_size)]
         episode_lengths = np.zeros(batch_size, dtype=np.float32)
@@ -588,6 +610,11 @@ class TrajectoryCollector:
             batch.non_tensor_batch['wm_action_text'] = np.array([str(action) for action in text_actions], dtype=object)
             batch.non_tensor_batch['wm_next_obs_text'] = next_obs_text
             batch.non_tensor_batch['wm_done_after_action'] = np.asarray(dones, dtype=bool)
+            for key, values in scheduled_metadata.items():
+                current_values = np.array([info.get(key) for info in infos], dtype=object)
+                if not np.array_equal(current_values, values):
+                    raise RuntimeError(f"ALFWorld episode metadata changed during rollout: {key}")
+                batch.non_tensor_batch[key] = values
             if self._obs_ce_enabled():
                 batch.batch.update(self._build_obs_ce_batch(
                     prev_obs=obs,

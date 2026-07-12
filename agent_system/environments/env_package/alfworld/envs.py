@@ -13,15 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import os
-import yaml
+
 import gymnasium as gym
-from gymnasium import spaces
-import numpy as np
+import ray
 import torch
 import torchvision.transforms as T
-import ray
+import yaml
 
+from agent_system.alfworld_game_manifest import (
+    WORKSTREAM_B_INFO_KEYS,
+    canonicalize_schedule,
+    load_manifest,
+)
 from agent_system.environments.env_package.alfworld.alfworld.agents.environment import get_environment
 
 ALF_ACTION_LIST=["pass", "goto", "pick", "put", "open", "close", "toggle", "heat", "clean", "cool", "slice", "inventory", "examine", "look"]
@@ -59,8 +64,48 @@ class AlfworldWorker:
     """
     
     def __init__(self, config, seed, base_env):
-        self.env = base_env.init_env(batch_size=1)  # Each worker holds only one sub-environment
-        self.env.seed(seed)
+        self.base_env = base_env
+        self.seed = seed
+        self.env = self._make_env()
+        self.current_schedule = None
+
+    def _make_env(self, gamefile=None):
+        env_factory = copy.copy(self.base_env)
+        if gamefile is not None:
+            env_factory.game_files = [gamefile]
+            env_factory.num_games = 1
+        env = env_factory.init_env(batch_size=1)
+        env.seed(self.seed)
+        return env
+
+    def _select_scheduled_game(self, schedule):
+        gamefile = schedule["wm_gamefile"]
+        if self.current_schedule is None or self.current_schedule["wm_gamefile"] != gamefile:
+            close = getattr(self.env, "close", None)
+            if callable(close):
+                close()
+            self.env = self._make_env(gamefile=gamefile)
+        self.current_schedule = dict(schedule)
+
+    def _attach_schedule(self, infos, verify_actual=False):
+        if self.current_schedule is None:
+            return infos
+        actual_gamefiles = infos.get("extra.gamefile")
+        actual_gamefile = actual_gamefiles[0] if actual_gamefiles is not None and len(actual_gamefiles) else None
+        if verify_actual and os.path.realpath(str(actual_gamefile)) != self.current_schedule["wm_gamefile"]:
+            raise RuntimeError(
+                "ALFWorld scheduled game mismatch: "
+                f"expected={self.current_schedule['wm_gamefile']!r} actual={actual_gamefile!r}"
+            )
+        if actual_gamefile is not None and os.path.realpath(str(actual_gamefile)) != self.current_schedule["wm_gamefile"]:
+            raise RuntimeError(
+                "ALFWorld game changed during scheduled episode: "
+                f"expected={self.current_schedule['wm_gamefile']!r} actual={actual_gamefile!r}"
+            )
+        infos["extra.gamefile"] = [self.current_schedule["wm_gamefile"]]
+        for key in WORKSTREAM_B_INFO_KEYS:
+            infos[key] = [self.current_schedule[key]]
+        return infos
     
     def step(self, action):
         """Execute a step in the environment"""
@@ -68,12 +113,16 @@ class AlfworldWorker:
         
         obs, scores, dones, infos = self.env.step(actions)
         infos['observation_text'] = obs
+        infos = self._attach_schedule(infos)
         return obs, scores, dones, infos
     
-    def reset(self):
+    def reset(self, schedule=None):
         """Reset the environment"""
+        if schedule is not None:
+            self._select_scheduled_game(schedule)
         obs, infos = self.env.reset()
         infos['observation_text'] = obs
+        infos = self._attach_schedule(infos, verify_actual=True)
         return obs, infos
     
     def getobs(self):
@@ -83,8 +132,9 @@ class AlfworldWorker:
         return image
 
 class AlfworldEnvs(gym.Env):
-    def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}):
+    def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs=None):
         super().__init__()
+        env_kwargs = env_kwargs or {}
         
         # Initialize Ray if not already initialized
         if not ray.is_initialized():
@@ -95,8 +145,24 @@ class AlfworldEnvs(gym.Env):
         env_type = config['env']['type']
         base_env = get_environment(env_type)(config, train_eval='train' if is_train else eval_dataset)
         self.multi_modal = (env_type == 'AlfredThorEnv')
+        self.env_num = env_num
         self.num_processes = env_num * group_n
         self.group_n = group_n
+        self.require_manifest_schedule = bool(env_kwargs.get("require_manifest_schedule", False))
+        manifest_path = env_kwargs.get("manifest_path")
+        self.manifest = None
+        if manifest_path:
+            self.manifest = load_manifest(
+                manifest_path,
+                expected_games=env_kwargs.get("manifest_expected_games"),
+                expected_raw_trajectories=env_kwargs.get(
+                    "manifest_expected_raw_trajectories"
+                ),
+                require_train=True,
+                verify_files=bool(env_kwargs.get("verify_manifest_files", True)),
+            )
+        if self.require_manifest_schedule and self.manifest is None:
+            raise ValueError("require_manifest_schedule=true requires env.alfworld.manifest_path")
 
         # Create Ray remote actors instead of processes
         env_worker = ray.remote(**resources_per_worker)(AlfworldWorker)
@@ -143,7 +209,16 @@ class AlfworldEnvs(gym.Env):
 
         return text_obs_list, image_obs_list, rewards_list, dones_list, info_list
 
-    def reset(self):
+    def _normalise_schedule(self, schedule):
+        return canonicalize_schedule(
+            self.manifest,
+            schedule,
+            env_num=self.env_num,
+            group_n=self.group_n,
+            require_schedule=self.require_manifest_schedule,
+        )
+
+    def reset(self, schedule=None):
         """
         Send the reset command to all workers at once and collect initial obs/info from each environment.
         """
@@ -153,8 +228,9 @@ class AlfworldEnvs(gym.Env):
 
         # Send reset commands to all workers
         futures = []
-        for worker in self.workers:
-            future = worker.reset.remote()
+        schedule_entries = self._normalise_schedule(schedule)
+        for worker, schedule_entry in zip(self.workers, schedule_entries):
+            future = worker.reset.remote(schedule_entry)
             futures.append(future)
 
         # Collect results
@@ -202,5 +278,5 @@ class AlfworldEnvs(gym.Env):
         for worker in self.workers:
             ray.kill(worker)
 
-def build_alfworld_envs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}):
+def build_alfworld_envs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs=None):
     return AlfworldEnvs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train, env_kwargs)

@@ -24,7 +24,7 @@ PYTHON=${PYTHON:-python}
 
 TAG=${TAG:-wm_checkpoint_diagnostics}
 LABEL_PREFIX=${LABEL_PREFIX:-$(basename "$CKPT_ROOT")}
-STEPS=${STEPS:-init 30 60 90 120 150}
+STEPS=${STEPS:-init 15 30 45 60 75 90 105 120 135 150}
 MAX_LENGTH=${MAX_LENGTH:-512}
 BATCH_SIZE=${BATCH_SIZE:-1}
 MAX_ROWS=${MAX_ROWS:-0}
@@ -47,6 +47,7 @@ if [[ "$GENERATE_REPORT" != "0" ]]; then
 fi
 
 checkpoint_args=()
+missing_checkpoints=()
 for step in $STEPS; do
   if [[ "$step" == "init" || "$step" == "0" ]]; then
     checkpoint_args+=(--checkpoint "${LABEL_PREFIX}_init=base")
@@ -56,9 +57,16 @@ for step in $STEPS; do
   if [[ -d "$ckpt/actor" ]]; then
     checkpoint_args+=(--checkpoint "${LABEL_PREFIX}_step${step}=$ckpt")
   else
-    echo "WM_CHECKPOINT_DIAGNOSTICS_SKIP missing=$ckpt" | tee -a "$LOG"
+    echo "WM_CHECKPOINT_DIAGNOSTICS_MISSING missing=$ckpt" | tee -a "$LOG"
+    missing_checkpoints+=("$ckpt")
   fi
 done
+
+if [[ ${#missing_checkpoints[@]} -ne 0 ]]; then
+  printf 'Required checkpoints are missing (%d):\n' "${#missing_checkpoints[@]}" >&2
+  printf '  %s\n' "${missing_checkpoints[@]}" >&2
+  exit 1
+fi
 
 if [[ ${#checkpoint_args[@]} -eq 0 ]]; then
   echo "No checkpoints selected from STEPS='$STEPS' under $CKPT_ROOT" >&2

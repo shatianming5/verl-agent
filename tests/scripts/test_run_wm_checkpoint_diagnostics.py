@@ -11,7 +11,7 @@ def test_run_wm_checkpoint_diagnostics_generates_report_artifacts(tmp_path):
     transitions = tmp_path / "transitions.wm_transitions.jsonl"
     transitions.write_text("{}\n", encoding="utf-8")
     ckpt_root = tmp_path / "exp"
-    for step in (30, 150):
+    for step in (30, 90, 150):
         (ckpt_root / f"global_step_{step}" / "actor").mkdir(parents=True)
 
     scorer_args = tmp_path / "scorer_args.json"
@@ -69,8 +69,6 @@ def test_run_wm_checkpoint_diagnostics_generates_report_artifacts(tmp_path):
 
     result = subprocess.run(["bash", str(script)], env=env, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-    assert "WM_CHECKPOINT_DIAGNOSTICS_SKIP" in result.stdout
-    assert "global_step_90" in result.stdout
     assert "WM_CHECKPOINT_DIAGNOSTICS_DONE" in result.stdout
     assert f"report_md={out_dir / 'checkpoint_diagnostics_report.md'}" in result.stdout
     assert f"report_csv={out_dir / 'checkpoint_diagnostics_report.csv'}" in result.stdout
@@ -88,7 +86,7 @@ def test_run_wm_checkpoint_diagnostics_generates_report_artifacts(tmp_path):
     assert scorer_argv[scorer_argv.index("--checkpoint") + 1] == "exp_init=base"
     assert f"exp_step30={ckpt_root / 'global_step_30'}" in scorer_argv
     assert f"exp_step150={ckpt_root / 'global_step_150'}" in scorer_argv
-    assert all("global_step_90" not in item for item in scorer_argv)
+    assert f"exp_step90={ckpt_root / 'global_step_90'}" in scorer_argv
 
     reporter_argv = json.loads(reporter_args.read_text(encoding="utf-8"))
     assert reporter_argv[reporter_argv.index("--summary-json") + 1] == str(out_dir / "checkpoint_scores_summary.json")
@@ -144,6 +142,47 @@ def test_run_wm_checkpoint_diagnostics_can_skip_report_generation(tmp_path):
     assert "report_md=" not in result.stdout
     assert (out_dir / "checkpoint_scores.csv").stat().st_size > 0
     assert not (out_dir / "checkpoint_diagnostics_report.md").exists()
+
+
+def test_run_wm_checkpoint_diagnostics_fails_when_any_requested_checkpoint_is_missing(tmp_path):
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "run_wm_checkpoint_diagnostics.sh"
+    transitions = tmp_path / "transitions.wm_transitions.jsonl"
+    transitions.write_text("{}\n", encoding="utf-8")
+    ckpt_root = tmp_path / "exp"
+    (ckpt_root / "global_step_15" / "actor").mkdir(parents=True)
+    marker = tmp_path / "scorer_ran"
+    scorer = tmp_path / "scorer.py"
+    scorer.write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "TRANSITIONS_JSONL": str(transitions),
+        "CKPT_ROOT": str(ckpt_root),
+        "COMMON_SH": str(tmp_path / "missing_common.sh"),
+        "MODEL": "/model",
+        "PYTHON": sys.executable,
+        "SCORER": str(scorer),
+        "OUT_DIR": str(tmp_path / "out"),
+        "STEPS": "init 15 30",
+        "GENERATE_REPORT": "0",
+    }
+
+    result = subprocess.run(
+        ["bash", str(script)],
+        env=env,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "global_step_30" in result.stdout
+    assert "WM_CHECKPOINT_DIAGNOSTICS_DONE" not in result.stdout
+    assert not marker.exists()
 
 
 def test_run_wm_checkpoint_diagnostics_rejects_stale_scorer_outputs(tmp_path):

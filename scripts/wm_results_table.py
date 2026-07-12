@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import hashlib
 import json
 import math
 import os
@@ -22,8 +23,13 @@ DEFAULT_WORK = "/mnt/cephfs_home_tianming.sha/grpo_alfworld"
 DEFAULT_EVAL_SCRIPT = "/root/grpo/eval10x_alfworld.sh"
 DEFAULT_TRAIN_SCRIPT = "/root/grpo/run_seed_alfworld_official.sh"
 DEFAULT_DIAGNOSTIC_SCRIPT = "scripts/run_wm_checkpoint_diagnostics.sh"
-BASELINE_VALIDATION_TRANSITION_DUMP = (
-    "logs/world_model_diagnostics/wm_valdump_smoke_s0_step150/150.val.wm_transitions.jsonl"
+FULL_PROTOCOL_STEPS = ("init", "15", "30", "45", "60", "75", "90", "105", "120", "135", "150")
+FULL_PROTOCOL_METRICS = (
+    "ce",
+    "nll",
+    "perplexity",
+    "target_confidence_mean",
+    "raw_action_obs_cosine",
 )
 RUN_PREFIX_RE = re.compile(r"grpo_qwen2\.5_1\.5b_alfworld_(.+?)(?:_\d{8}_\d{6})?(?:\.log)?$")
 GOAL_RD_EXPECTED_RUNS = [
@@ -34,8 +40,10 @@ GOAL_RD_EXPECTED_RUNS = [
     "obs_ce_l0p001_s1:objective=obs_ce,seed=1,lambda_obs=0.001,tag=wm_obs_ce_l0p001_s1",
     "obs_ce_l0p01_s0:objective=obs_ce,seed=0,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s0",
     "obs_ce_l0p01_s1:objective=obs_ce,seed=1,lambda_obs=0.01,tag=wm_obs_ce_l0p01_s1",
-    "latent_l0p001_s0:objective=latent,seed=0,lambda_latent=0.001,tag=wmlat_l0p001_s0",
-    "latent_l0p001_s1:objective=latent,seed=1,lambda_latent=0.001,tag=wmlat_l0p001_s1",
+    "latent_direct_l0p001_s0:objective=latent,seed=0,lambda_latent=0.001,tag=wmlatnp_direct_l0p001_s0",
+    "latent_direct_l0p001_s1:objective=latent,seed=1,lambda_latent=0.001,tag=wmlatnp_direct_l0p001_s1",
+    "latent_direct_l0p005_s0:objective=latent,seed=0,lambda_latent=0.005,tag=wmlatnp_direct_l0p005_s0",
+    "latent_direct_l0p005_s1:objective=latent,seed=1,lambda_latent=0.005,tag=wmlatnp_direct_l0p005_s1",
 ]
 
 CSV_COLUMNS = [
@@ -101,6 +109,17 @@ CSV_COLUMNS = [
     "diagnostic_chat_template_kwargs",
     "diagnostic_cwd",
     "diagnostic_argv",
+    "diagnostic_full_protocol_done_path",
+    "diagnostic_full_protocol_validated",
+    "diagnostic_manifest_sha256",
+    "diagnostic_cross_seed_trend_csv",
+    "diagnostic_cross_seed_trend_report",
+    "diagnostic_stats_csv",
+    "diagnostic_paired_trends_csv",
+    "diagnostic_token_calibration_csv",
+    "diagnostic_overlap_control_csv",
+    "diagnostic_probe_csv",
+    "diagnostic_required_figure_paths",
     "train_log_path",
     "launch_line",
     "command_summary",
@@ -212,10 +231,7 @@ def parse_args() -> argparse.Namespace:
         "--expected-run",
         action="append",
         default=[],
-        help=(
-            "Expected run to include in coverage, even if no artifacts are found. "
-            "Format: run_key or run_key:key=value,key=value."
-        ),
+        help=("Expected run to include in coverage, even if no artifacts are found. Format: run_key or run_key:key=value,key=value."),
     )
     parser.add_argument(
         "--expected-goal-rd-runs",
@@ -252,7 +268,7 @@ def standard_layout_globs(work_root: str) -> tuple[list[str], list[str], list[st
             str(logs / "*wmlat*.log"),
             str(logs / "*latent*.log"),
         ],
-        [str(logs / "world_model_diagnostics" / "**" / "checkpoint_scores_summary.json")],
+        [str(logs / "world_model_diagnostics" / "**" / "FULL_PROTOCOL_DONE.json")],
     )
 
 
@@ -428,8 +444,17 @@ def infer_metadata(fragment: str, text: str = "") -> dict[str, str]:
     if not lambda_latent and any(token in fragment_lowered for token in ("wmlat", "latent")):
         lambda_latent = infer_l_token(normalized_fragment)
     objective = infer_objective(combined, lambda_obs=lambda_obs, lambda_latent=lambda_latent)
+    tag = infer_tag(combined)
 
-    parts = [objective]
+    key_objective = objective
+    if objective == "latent":
+        latent_identity = normalize_fragment(f"{normalized_fragment} {tag}").lower()
+        if "wmlatnp_direct" in latent_identity or "latent_direct" in latent_identity:
+            key_objective = "latent_direct"
+        elif "wmlatnp" in latent_identity:
+            key_objective = "latent_nopredictor"
+
+    parts = [key_objective]
     if objective == "obs_ce" and lambda_obs:
         parts.append(lambda_label(lambda_obs))
     elif objective == "latent" and lambda_latent:
@@ -439,7 +464,6 @@ def infer_metadata(fragment: str, text: str = "") -> dict[str, str]:
     run_key = "_".join(part for part in parts if part and part != "unknown")
     if not run_key:
         run_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", normalize_fragment(fragment)).strip("_") or "unknown"
-    tag = infer_tag(combined)
     return {
         "run_key": run_key,
         "method": method_from_objective(objective),
@@ -570,10 +594,7 @@ def parse_train_log(path: str) -> dict[str, Any]:
         "latest_checkpoint_path": ckpt_path,
         "val_success_last": val_values[-1] if val_values else "",
         "val_success_best": max(val_values) if val_values else "",
-        "status": "training_complete"
-        if any(step >= total for step, total in progress)
-        or (latest_step is not None and isinstance(total_steps, int) and latest_step >= total_steps)
-        else "training_seen",
+        "status": "training_complete" if any(step >= total for step, total in progress) or (latest_step is not None and isinstance(total_steps, int) and latest_step >= total_steps) else "training_seen",
     }
     for metric in (
         "actor/wm_obs_ce_loss",
@@ -607,10 +628,7 @@ def parse_train_log(path: str) -> dict[str, Any]:
     elif row.get("actor/wm_cosine") not in ("", None):
         row["wm_cosine_last"] = row["actor/wm_cosine"]
     if row.get("wm_cosine_last") not in ("", None):
-        row["wm_metric_last"] = (
-            f"latent_loss={format_number(row.get('wm_loss_last'), digits=3)}, "
-            f"cosine={format_number(row.get('wm_cosine_last'), digits=3)}"
-        )
+        row["wm_metric_last"] = f"latent_loss={format_number(row.get('wm_loss_last'), digits=3)}, cosine={format_number(row.get('wm_cosine_last'), digits=3)}"
     return row
 
 
@@ -796,6 +814,337 @@ def numeric_delta(row: dict[str, Any], baseline: dict[str, Any], key: str) -> st
     return f"{value - base:.10g}"
 
 
+def required_nonempty_file(path: Any, label: str) -> Path:
+    value = Path(str(path or ""))
+    if not value.is_file() or value.stat().st_size == 0:
+        raise ValueError(f"Missing {label}: {value}")
+    return value.resolve()
+
+
+def sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_full_protocol_manifest(path: Any) -> dict[str, Any]:
+    manifest_path = required_nonempty_file(path, "full-protocol manifest")
+    with manifest_path.open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    if manifest.get("schema_version") != "alfworld_train_manifest_v1":
+        raise ValueError("Full-protocol manifest schema is invalid")
+    if manifest.get("split") != "train":
+        raise ValueError("Full-protocol manifest is not the train split")
+    if manifest.get("raw_traj_data_count") != 6374:
+        raise ValueError("Full-protocol manifest does not contain 6374 raw trajectories")
+    games = manifest.get("games")
+    if not isinstance(games, list) or len(games) != 3553:
+        raise ValueError("Full-protocol manifest does not contain exactly 3553 games")
+    if manifest.get("game_count") != 3553:
+        raise ValueError("Full-protocol manifest game_count is not 3553")
+    game_ids = []
+    for game in games:
+        if not isinstance(game, dict):
+            raise ValueError("Full-protocol manifest game entry is invalid")
+        game_ids.append(str(game.get("game_id", "")))
+        digest = str(game.get("sha256", ""))
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Full-protocol manifest game SHA256 is invalid")
+    if not all(game_ids) or len(set(game_ids)) != 3553 or game_ids != sorted(game_ids):
+        raise ValueError("Full-protocol manifest game ids are incomplete or unsorted")
+    unsigned = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    if manifest.get("manifest_sha256") != fingerprint:
+        raise ValueError("Full-protocol manifest SHA256 does not match its contents")
+    manifest["_path"] = str(manifest_path)
+    return manifest
+
+
+def validate_recorded_coverage(
+    coverage: dict[str, Any],
+    *,
+    step: str,
+    manifest: dict[str, Any],
+) -> None:
+    expected = {
+        "schema_version": "workstream_b_rollout_coverage_v1",
+        "protocol": "workstream_b_full_train_v2",
+        "manifest_sha256": manifest["manifest_sha256"],
+        "raw_traj_data_count": 6374,
+        "manifest_games": 3553,
+        "covered_games": 3553,
+        "checkpoint_step": step,
+        "decoding": {
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "top_k": -1,
+            "do_sample": True,
+        },
+    }
+    for key, value in expected.items():
+        if coverage.get(key) != value:
+            raise ValueError(f"Full-protocol coverage mismatch at step {step}: {key}")
+    if coerce_int(coverage.get("episodes")) != 3553:
+        raise ValueError(f"Full-protocol episode coverage is not 3553 at step {step}")
+    if coerce_int(coverage.get("min_trajectories_per_game")) is None or int(coverage["min_trajectories_per_game"]) < 1:
+        raise ValueError(f"Full-protocol trajectory coverage is missing at step {step}")
+    transitions = coerce_int(coverage.get("transitions"))
+    stable_ids = coerce_int(coverage.get("stable_transition_ids"))
+    if transitions is None or transitions <= 0 or stable_ids != transitions:
+        raise ValueError(f"Full-protocol transition ids are incomplete at step {step}")
+    successes = coerce_int(coverage.get("success_episodes"))
+    failures = coerce_int(coverage.get("failure_episodes"))
+    if successes is None or failures is None or successes + failures != 3553:
+        raise ValueError(f"Full-protocol success labels are incomplete at step {step}")
+    if Path(str(coverage.get("manifest_path", ""))).resolve() != Path(manifest["_path"]).resolve():
+        raise ValueError(f"Coverage manifest path mismatch at step {step}")
+    required_nonempty_file(coverage.get("dump_path"), f"step {step} rollout dump")
+
+
+def full_protocol_step_artifacts(
+    out_root: Path,
+    seed: int,
+    step: str,
+    manifest: dict[str, Any],
+) -> None:
+    step_dir = out_root / f"seed{seed}" / f"step{step}"
+    coverage_path = required_nonempty_file(
+        step_dir / "coverage.json",
+        f"seed {seed} step {step} coverage",
+    )
+    with coverage_path.open(encoding="utf-8") as handle:
+        coverage = json.load(handle)
+    validate_recorded_coverage(coverage, step=step, manifest=manifest)
+
+    summary_path = required_nonempty_file(
+        step_dir / "score_summary.json",
+        f"seed {seed} step {step} score provenance",
+    )
+    with summary_path.open(encoding="utf-8") as handle:
+        summary = json.load(handle)
+    provenance = summary.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError(f"Missing scorer provenance for seed {seed} step {step}")
+    if summary.get("raw_cosine_only") is not True:
+        raise ValueError(f"Non-raw scorer summary for seed {seed} step {step}")
+    summary_coverage = summary.get("coverage")
+    if not isinstance(summary_coverage, dict):
+        raise ValueError(f"Missing scorer coverage for seed {seed} step {step}")
+    for key in (
+        "schema_version",
+        "protocol",
+        "manifest_sha256",
+        "raw_traj_data_count",
+        "manifest_games",
+        "covered_games",
+        "episodes",
+        "transitions",
+        "stable_transition_ids",
+        "checkpoint_step",
+        "decoding",
+    ):
+        if summary_coverage.get(key) != coverage.get(key):
+            raise ValueError(f"Scorer/rollout coverage mismatch for seed {seed} step {step}: {key}")
+    if coerce_int(summary.get("rows")) != coerce_int(coverage.get("transitions")):
+        raise ValueError(f"Scorer row mismatch for seed {seed} step {step}")
+    if provenance.get("require_full_protocol") is not True:
+        raise ValueError(f"Scorer did not require full protocol for seed {seed} step {step}")
+    if provenance.get("max_rows") != 0 or provenance.get("checkpoint_count") != 1:
+        raise ValueError(f"Scorer used capped/shared scoring for seed {seed} step {step}")
+    if provenance.get("expected_games") != 3553 or provenance.get("expected_raw_trajectories") != 6374:
+        raise ValueError(f"Scorer count provenance mismatch for seed {seed} step {step}")
+    if str(provenance.get("expected_checkpoint_step")) != step:
+        raise ValueError(f"Scorer checkpoint provenance mismatch for seed {seed} step {step}")
+    if Path(str(provenance.get("manifest", ""))).resolve() != Path(manifest["_path"]).resolve():
+        raise ValueError(f"Scorer manifest provenance mismatch for seed {seed} step {step}")
+    checkpoints = provenance.get("checkpoints")
+    if not isinstance(checkpoints, list) or len(checkpoints) != 1:
+        raise ValueError(f"Scorer must contain one checkpoint for seed {seed} step {step}")
+    if str(checkpoints[0].get("step")) != step:
+        raise ValueError(f"Scorer checkpoint does not own rollout for seed {seed} step {step}")
+    score_csv_path = required_nonempty_file(
+        provenance.get("output_csv"),
+        f"seed {seed} step {step} score CSV",
+    )
+    if score_csv_path != (step_dir / "scores.csv").resolve():
+        raise ValueError(f"Scorer output path mismatch for seed {seed} step {step}")
+    if provenance.get("output_csv_sha256") != sha256_path(score_csv_path):
+        raise ValueError(f"Scorer output SHA256 mismatch for seed {seed} step {step}")
+    dump_path = required_nonempty_file(
+        coverage.get("dump_path"),
+        f"seed {seed} step {step} rollout dump",
+    )
+    if Path(str(provenance.get("transition_jsonl", ""))).resolve() != dump_path:
+        raise ValueError(f"Scorer dump path mismatch for seed {seed} step {step}")
+    if provenance.get("transition_jsonl_sha256") != sha256_path(dump_path):
+        raise ValueError(f"Scorer dump SHA256 mismatch for seed {seed} step {step}")
+
+
+def parse_full_protocol_done(path: str) -> list[dict[str, Any]]:
+    marker_path = required_nonempty_file(path, "FULL_PROTOCOL_DONE marker")
+    with marker_path.open(encoding="utf-8") as handle:
+        marker = json.load(handle)
+    if marker.get("schema_version") != "workstream_b_full_driver_v1" or marker.get("status") != "complete":
+        raise ValueError("FULL_PROTOCOL_DONE schema/status is invalid")
+    if marker.get("seeds") != [0, 1] or tuple(marker.get("steps", ())) != FULL_PROTOCOL_STEPS:
+        raise ValueError("FULL_PROTOCOL_DONE seed/checkpoint matrix is incomplete")
+    if marker.get("expected_raw_trajectories") != 6374 or marker.get("expected_games") != 3553:
+        raise ValueError("FULL_PROTOCOL_DONE ALFWorld counts are invalid")
+    out_root = marker_path.parent
+    manifest = validate_full_protocol_manifest(marker.get("manifest"))
+    required_nonempty_file(
+        out_root / "WORKSTREAM_B_FULL_REPORT.md",
+        "full Workstream B report",
+    )
+    required_nonempty_file(
+        marker.get("cross_seed_trend_csv"),
+        "cross-seed trend CSV",
+    )
+    required_nonempty_file(
+        marker.get("cross_seed_trend_report"),
+        "cross-seed trend report",
+    )
+    separation_path = required_nonempty_file(
+        marker.get("seed_checkpoint_separation"),
+        "seed checkpoint separation proof",
+    )
+    with separation_path.open(encoding="utf-8") as handle:
+        separation = json.load(handle)
+    if separation.get("schema_version") != "wm_seed_checkpoint_separation_v1":
+        raise ValueError("Seed checkpoint separation proof schema is invalid")
+    if Path(str(separation.get("seed0_checkpoint_root", ""))).resolve() == Path(str(separation.get("seed1_checkpoint_root", ""))).resolve():
+        raise ValueError("Seed checkpoint roots are not distinct")
+    checkpoint_separation = separation.get("checkpoints")
+    if not isinstance(checkpoint_separation, list) or len(checkpoint_separation) != 10:
+        raise ValueError("Seed checkpoint separation proof is incomplete")
+    separation_by_step = {}
+    for row in checkpoint_separation:
+        step = coerce_int(row.get("step"))
+        if step not in {int(value) for value in FULL_PROTOCOL_STEPS[1:]}:
+            raise ValueError("Seed checkpoint separation step is invalid")
+        if row.get("seed0_content_sha256") == row.get("seed1_content_sha256"):
+            raise ValueError(f"Seed checkpoint inventories match at step {step}")
+        separation_by_step[step] = row
+    if len(separation_by_step) != 10:
+        raise ValueError("Seed checkpoint separation proof has duplicate steps")
+    inventory_dir = Path(str(marker.get("actor_inventory_dir", "")))
+    seed_artifacts = {}
+    for seed in (0, 1):
+        for step in FULL_PROTOCOL_STEPS[1:]:
+            inventory_path = required_nonempty_file(
+                inventory_dir / f"seed{seed}_step{step}_actor_inventory.json",
+                f"seed {seed} step {step} actor inventory",
+            )
+            with inventory_path.open(encoding="utf-8") as handle:
+                inventory = json.load(handle)
+            if inventory.get("schema_version") != "wm_actor_shard_inventory_v1":
+                raise ValueError(f"Actor inventory schema is invalid at seed {seed} step {step}")
+            if inventory.get("checkpoint_step") != int(step):
+                raise ValueError(f"Actor inventory step mismatch at seed {seed} step {step}")
+            expected_fingerprint = separation_by_step[int(step)][f"seed{seed}_content_sha256"]
+            if inventory.get("content_sha256") != expected_fingerprint:
+                raise ValueError(f"Actor inventory/separation proof mismatch at seed {seed} step {step}")
+        full_protocol_step_artifacts(out_root, seed, "init", manifest)
+        for step in FULL_PROTOCOL_STEPS[1:]:
+            full_protocol_step_artifacts(out_root, seed, step, manifest)
+        analysis_dir = out_root / f"seed{seed}" / "analysis"
+        report_path = required_nonempty_file(
+            analysis_dir / f"workstream_b_report_baseline_seed{seed}.md",
+            f"seed {seed} Workstream B report",
+        )
+        stats_path = required_nonempty_file(
+            analysis_dir / f"bdiag_stats_baseline_seed{seed}.csv",
+            f"seed {seed} statistics CSV",
+        )
+        trends_path = required_nonempty_file(
+            analysis_dir / f"paired_game_trends_baseline_seed{seed}.csv",
+            f"seed {seed} paired-game trends",
+        )
+        calibration_path = required_nonempty_file(
+            analysis_dir / f"token_calibration_baseline_seed{seed}.csv",
+            f"seed {seed} token calibration",
+        )
+        overlap_path = required_nonempty_file(
+            analysis_dir / f"tokenizer_overlap_control_baseline_seed{seed}.csv",
+            f"seed {seed} overlap control",
+        )
+        probe_path = required_nonempty_file(
+            analysis_dir / "grouped_nested_hidden_probe.csv",
+            f"seed {seed} grouped probe",
+        )
+        figure_paths = []
+        for level in ("episode", "transition"):
+            for metric in FULL_PROTOCOL_METRICS:
+                figure_paths.append(
+                    required_nonempty_file(
+                        analysis_dir / f"line_{level}_{metric}_baseline_seed{seed}.png",
+                        f"seed {seed} {level} {metric} line figure",
+                    )
+                )
+        for metric in FULL_PROTOCOL_METRICS:
+            figure_paths.append(
+                required_nonempty_file(
+                    analysis_dir / f"hist_init_mid_150_{metric}_baseline_seed{seed}.png",
+                    f"seed {seed} {metric} histogram",
+                )
+            )
+        figure_paths.append(
+            required_nonempty_file(
+                analysis_dir / f"calibration_init_mid_150_baseline_seed{seed}.png",
+                f"seed {seed} calibration figure",
+            )
+        )
+        seed_artifacts[seed] = {
+            "report": report_path,
+            "stats": stats_path,
+            "trends": trends_path,
+            "calibration": calibration_path,
+            "overlap": overlap_path,
+            "probe": probe_path,
+            "figures": figure_paths,
+        }
+
+    rows = []
+    for seed in (0, 1):
+        rows.append(
+            {
+                "run_key": f"grpo_baseline_s{seed}",
+                "method": "grpo",
+                "objective": "grpo_baseline",
+                "seed": str(seed),
+                "diagnostic_final_step": "150",
+                "diagnostic_checkpoint_count": len(FULL_PROTOCOL_STEPS),
+                "diagnostic_report_md_path": str(seed_artifacts[seed]["report"]),
+                "diagnostic_summary_path": str(marker_path),
+                "diagnostic_full_protocol_done_path": str(marker_path),
+                "diagnostic_full_protocol_validated": "yes",
+                "diagnostic_manifest_sha256": manifest["manifest_sha256"],
+                "diagnostic_cross_seed_trend_csv": str(marker["cross_seed_trend_csv"]),
+                "diagnostic_cross_seed_trend_report": str(marker["cross_seed_trend_report"]),
+                "diagnostic_stats_csv": str(seed_artifacts[seed]["stats"]),
+                "diagnostic_paired_trends_csv": str(seed_artifacts[seed]["trends"]),
+                "diagnostic_token_calibration_csv": str(seed_artifacts[seed]["calibration"]),
+                "diagnostic_overlap_control_csv": str(seed_artifacts[seed]["overlap"]),
+                "diagnostic_probe_csv": str(seed_artifacts[seed]["probe"]),
+                "diagnostic_required_figure_paths": ";".join(str(path) for path in seed_artifacts[seed]["figures"]),
+                "diagnostic_readiness": "diagnosed",
+                "diagnostic_command": "",
+                "diagnostic_transition_jsonl": "",
+                "status": "diagnosed",
+            }
+        )
+    return rows
+
+
 def parse_diagnostic_summary(path: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as handle:
         summary = json.load(handle)
@@ -845,12 +1194,8 @@ def parse_diagnostic_summary(path: str) -> dict[str, Any]:
         "diagnostic_transition_jsonl": diagnostic_transition_jsonl(summary),
         "diagnostic_checkpoint_root": diagnostic_checkpoint_root(summary, final),
         **provenance,
-        "diagnostic_success_failure_ce_gap": ""
-        if success_ce is None or failure_ce is None
-        else f"{failure_ce - success_ce:.10g}",
-        "diagnostic_success_failure_cosine_gap": ""
-        if success_cosine is None or failure_cosine is None
-        else f"{success_cosine - failure_cosine:.10g}",
+        "diagnostic_success_failure_ce_gap": "" if success_ce is None or failure_ce is None else f"{failure_ce - success_ce:.10g}",
+        "diagnostic_success_failure_cosine_gap": "" if success_cosine is None or failure_cosine is None else f"{success_cosine - failure_cosine:.10g}",
     }
     row["status"] = "diagnosed" if has_complete_diagnostic_result(row) else "diagnostic_incomplete"
     return row
@@ -947,11 +1292,7 @@ def checkpoint_path_for_step(value: Any, step: int | None) -> str:
         for path in parts:
             if checkpoint_step_from_path(path) == step:
                 return path
-    stepped_paths = [
-        (checkpoint_step, -index, path)
-        for index, path in enumerate(parts)
-        if (checkpoint_step := checkpoint_step_from_path(path)) is not None
-    ]
+    stepped_paths = [(checkpoint_step, -index, path) for index, path in enumerate(parts) if (checkpoint_step := checkpoint_step_from_path(path)) is not None]
     if stepped_paths:
         return max(stepped_paths)[2]
     return parts[0]
@@ -1023,11 +1364,7 @@ def replace_diagnostic_status(existing: Any, incoming: Any) -> str:
     incoming_status = str(incoming or "")
     if incoming_status not in DIAGNOSTIC_STATUS_VALUES:
         return str(existing or "")
-    parts = [
-        part
-        for part in str(existing or "").split(";")
-        if part and part not in DIAGNOSTIC_STATUS_VALUES
-    ]
+    parts = [part for part in str(existing or "").split(";") if part and part not in DIAGNOSTIC_STATUS_VALUES]
     parts.append(incoming_status)
     return ";".join(parts)
 
@@ -1127,7 +1464,13 @@ def build_records(
     for path in train_logs:
         merge_record(records, parse_train_log(path))
     for path in sorted(diagnostic_paths, key=lambda item: (0 if "smoke" in item.lower() else 1, item)):
-        merge_record(records, parse_diagnostic_summary(path))
+        with open(path, encoding="utf-8") as handle:
+            header = json.load(handle)
+        if header.get("schema_version") == "workstream_b_full_driver_v1":
+            for row in parse_full_protocol_done(path):
+                merge_record(records, row)
+        else:
+            raise ValueError(f"Legacy diagnostic summary is not accepted; expected FULL_PROTOCOL_DONE.json: {path}")
     return sorted(records.values(), key=objective_sort_key)
 
 
@@ -1186,101 +1529,43 @@ def checkpoint_root_from_row(row: dict[str, Any]) -> str:
     return checkpoint_path
 
 
-def has_diagnostic_target_checkpoint(row: dict[str, Any], transition_step: str) -> bool:
-    checkpoint_root = checkpoint_root_from_row(row)
-    if not checkpoint_root:
-        return False
-    target_step = coerce_int(transition_step)
-    if target_step is None:
-        return True
-    for key in ("latest_checkpoint_path", "eval_target_checkpoint_path", "eval_checkpoint_path"):
-        step = coerce_int(row.get("latest_checkpoint_step")) if key == "latest_checkpoint_path" else coerce_int(row.get("checkpoint_step"))
-        checkpoint_step = checkpoint_step_from_path(checkpoint_path_for_step(row.get(key), step))
-        if checkpoint_step is not None and checkpoint_step >= target_step:
-            return True
-    latest_step = coerce_int(row.get("latest_checkpoint_step"))
-    return latest_step is not None and latest_step >= target_step
-
-
-def transition_jsonl_from_row(row: dict[str, Any], work_root: str, transition_step: str) -> str:
-    objective = str(row.get("objective") or "")
-    if objective == "grpo_baseline":
-        validation_data_dir = first_path(row.get("validation_data_dir"))
-        if validation_data_dir:
-            return str(Path(validation_data_dir) / f"{transition_step}.val.wm_transitions.jsonl")
-
-    rollout_data_dir = first_path(row.get("rollout_data_dir"))
-    if rollout_data_dir:
-        return str(Path(rollout_data_dir) / f"{transition_step}.wm_transitions.jsonl")
-
-    checkpoint_root = checkpoint_root_from_row(row)
-    if not checkpoint_root:
-        return ""
-    experiment_name = Path(checkpoint_root).name
-    if not experiment_name:
-        return ""
-    transition_jsonl = Path(work_root) / "logs" / "world_model_rollouts" / experiment_name / f"{transition_step}.wm_transitions.jsonl"
-    if objective == "grpo_baseline" and not transition_jsonl.is_file():
-        baseline_val_jsonl = Path(work_root) / BASELINE_VALIDATION_TRANSITION_DUMP
-        if baseline_val_jsonl.is_file():
-            return str(baseline_val_jsonl)
-    return str(transition_jsonl)
-
-
-def transition_jsonl_is_available(path: str) -> bool:
-    return bool(path) and Path(path).is_file()
-
-
-def build_diagnostic_command(
-    row: dict[str, Any],
-    work_root: str,
-    diagnostic_script: str,
-    diagnostic_steps: str,
-    transition_step: str,
-    diagnostic_cuda: str = "<free_2gpu_pair>",
-) -> str:
-    if not has_diagnostic_target_checkpoint(row, transition_step=transition_step):
-        return ""
-    checkpoint_root = checkpoint_root_from_row(row)
-    transition_jsonl = transition_jsonl_from_row(row, work_root=work_root, transition_step=transition_step)
-    if not checkpoint_root or not transition_jsonl:
-        return ""
-
-    assignments = {
-        "CUDA_VISIBLE_DEVICES": diagnostic_cuda,
-        "TRANSITIONS_JSONL": transition_jsonl,
-        "CKPT_ROOT": checkpoint_root,
-        "TAG": str(row.get("tag") or row.get("run_key") or "wm_checkpoint_diagnostics"),
-        "STEPS": diagnostic_steps,
-    }
-    prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in assignments.items())
-    return f"{prefix} bash {shlex.quote(diagnostic_script)}"
-
-
 def has_diagnostic_artifact(row: dict[str, Any]) -> bool:
-    return bool(row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
+    return bool(row.get("diagnostic_full_protocol_done_path") or row.get("diagnostic_summary_path") or row.get("diagnostic_token_mean_ce") not in ("", None))
 
 
 def has_complete_diagnostic_result(row: dict[str, Any], target_step: int = 150) -> bool:
-    if not has_diagnostic_artifact(row):
+    metadata_complete = bool(
+        row.get("diagnostic_full_protocol_done_path")
+        and row.get("diagnostic_full_protocol_validated") == "yes"
+        and coerce_int(row.get("diagnostic_final_step")) == target_step
+        and coerce_int(row.get("diagnostic_checkpoint_count")) == len(FULL_PROTOCOL_STEPS)
+        and row.get("diagnostic_manifest_sha256")
+        and row.get("diagnostic_cross_seed_trend_csv")
+        and row.get("diagnostic_cross_seed_trend_report")
+        and row.get("diagnostic_stats_csv")
+        and row.get("diagnostic_paired_trends_csv")
+        and row.get("diagnostic_token_calibration_csv")
+        and row.get("diagnostic_overlap_control_csv")
+        and row.get("diagnostic_probe_csv")
+        and row.get("diagnostic_required_figure_paths")
+    )
+    if not metadata_complete:
         return False
-    final_step = coerce_int(row.get("diagnostic_final_step"))
-    if final_step is None or final_step < target_step:
+    required_paths = [
+        row["diagnostic_full_protocol_done_path"],
+        row["diagnostic_report_md_path"],
+        row["diagnostic_stats_csv"],
+        row["diagnostic_paired_trends_csv"],
+        row["diagnostic_token_calibration_csv"],
+        row["diagnostic_overlap_control_csv"],
+        row["diagnostic_probe_csv"],
+        row["diagnostic_cross_seed_trend_csv"],
+        row["diagnostic_cross_seed_trend_report"],
+    ]
+    if any(not Path(str(path)).is_file() or Path(str(path)).stat().st_size == 0 for path in required_paths):
         return False
-    if coerce_float(row.get("diagnostic_token_mean_ce")) is None:
-        return False
-    final_cosine = coerce_float(row.get("diagnostic_action_obs_cosine"))
-    if final_cosine is None:
-        final_cosine = coerce_float(row.get("diagnostic_final_cosine"))
-    if final_cosine is None:
-        return False
-    for key in ("diagnostic_rows_with_targets", "diagnostic_target_tokens"):
-        if row.get(key) in ("", None):
-            continue
-        value = coerce_int(row.get(key))
-        if value is None or value <= 0:
-            return False
-    return True
+    figure_paths = [Path(path) for path in str(row["diagnostic_required_figure_paths"]).split(";") if path]
+    return len(figure_paths) == 16 and all(path.is_file() and path.stat().st_size > 0 for path in figure_paths)
 
 
 def has_diagnostic_result(row: dict[str, Any]) -> bool:
@@ -1387,48 +1672,15 @@ def annotate_diagnostic_commands(
     diagnostic_cuda: str = "<free_2gpu_pair>",
 ) -> None:
     for row in rows:
+        row["diagnostic_command"] = ""
+        row["diagnostic_transition_jsonl"] = ""
         if has_diagnostic_result(row):
             row["diagnostic_readiness"] = "diagnosed"
             continue
-        diagnostic_incomplete = has_diagnostic_artifact(row)
-        if diagnostic_incomplete:
-            row["diagnostic_command"] = ""
         if has_diagnostic_artifact(row):
-            row["diagnostic_readiness"] = "diagnostic_incomplete"
-        elif row.get("diagnostic_command"):
-            row["diagnostic_readiness"] = "ready_for_diagnostic"
-            continue
-        if not checkpoint_root_from_row(row):
-            row["diagnostic_readiness"] = (
-                "diagnostic_incomplete"
-                if diagnostic_incomplete
-                else "missing_training_log"
-                if not row.get("train_log_path")
-                else "waiting_for_checkpoint"
-            )
-            continue
-        if not has_diagnostic_target_checkpoint(row, transition_step=transition_step):
-            row["diagnostic_readiness"] = "diagnostic_incomplete" if diagnostic_incomplete else "waiting_for_checkpoint"
-            continue
-        checkpoint_root = checkpoint_root_from_row(row)
-        transition_jsonl = transition_jsonl_from_row(row, work_root=work_root, transition_step=transition_step)
-        if not checkpoint_root or not transition_jsonl:
-            row["diagnostic_readiness"] = "diagnostic_incomplete" if diagnostic_incomplete else "missing_transition_dump"
-            continue
-        row["diagnostic_checkpoint_root"] = checkpoint_root
-        row["diagnostic_transition_jsonl"] = transition_jsonl
-        if not transition_jsonl_is_available(transition_jsonl):
-            row["diagnostic_readiness"] = "diagnostic_incomplete" if diagnostic_incomplete else "missing_transition_dump"
-            continue
-        row["diagnostic_readiness"] = "ready_for_diagnostic"
-        row["diagnostic_command"] = build_diagnostic_command(
-            row,
-            work_root=work_root,
-            diagnostic_script=diagnostic_script,
-            diagnostic_steps=diagnostic_steps,
-            transition_step=transition_step,
-            diagnostic_cuda=diagnostic_cuda,
-        )
+            row["diagnostic_readiness"] = "legacy_diagnostic_rejected"
+        else:
+            row["diagnostic_readiness"] = "full_protocol_required"
 
 
 def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
@@ -1440,11 +1692,23 @@ def annotate_artifact_coverage(rows: list[dict[str, Any]]) -> None:
         if has_diagnostic:
             for key, label in (
                 ("diagnostic_report_md_path", "diagnostic_report_md"),
-                ("diagnostic_report_csv_path", "diagnostic_report_csv"),
-                ("diagnostic_report_svg_path", "diagnostic_report_svg"),
+                ("diagnostic_stats_csv", "diagnostic_stats_csv"),
+                ("diagnostic_paired_trends_csv", "diagnostic_paired_trends_csv"),
+                ("diagnostic_token_calibration_csv", "diagnostic_token_calibration_csv"),
+                ("diagnostic_overlap_control_csv", "diagnostic_overlap_control_csv"),
+                ("diagnostic_probe_csv", "diagnostic_probe_csv"),
+                ("diagnostic_cross_seed_trend_csv", "diagnostic_cross_seed_trend_csv"),
+                (
+                    "diagnostic_cross_seed_trend_report",
+                    "diagnostic_cross_seed_trend_report",
+                ),
             ):
-                if not row.get(key):
+                path = Path(str(row.get(key) or ""))
+                if not path.is_file() or path.stat().st_size == 0:
                     missing_diagnostic_reports.append(label)
+            figure_paths = [Path(path) for path in str(row.get("diagnostic_required_figure_paths") or "").split(";") if path]
+            if len(figure_paths) != 16 or any(not path.is_file() or path.stat().st_size == 0 for path in figure_paths):
+                missing_diagnostic_reports.append("diagnostic_required_figures")
         row["has_train_log"] = "yes" if has_train else "no"
         row["has_eval"] = "yes" if has_eval else "no"
         row["has_diagnostic"] = "yes" if has_diagnostic else "no"
@@ -1558,12 +1822,7 @@ def result_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if eval_std is not None and row_has_eval(row):
             group["eval_stds"].append(eval_std)
 
-    baseline_means = [
-        value
-        for group in groups.values()
-        if group["objective"] == "grpo_baseline"
-        for value in group["eval_means"]
-    ]
+    baseline_means = [value for group in groups.values() if group["objective"] == "grpo_baseline" for value in group["eval_means"]]
     baseline_mean = average(baseline_means)
 
     result = []
@@ -1661,14 +1920,7 @@ def row_has_diagnostic(row: dict[str, Any]) -> bool:
 
 
 def objective_eval_values(rows: list[dict[str, Any]], objective: str) -> list[float]:
-    return [
-        value
-        for row in rows
-        if str(row.get("objective") or "") == objective
-        if row_has_eval(row)
-        for value in [coerce_float(row.get("eval_mean"))]
-        if value is not None
-    ]
+    return [value for row in rows if str(row.get("objective") or "") == objective if row_has_eval(row) for value in [coerce_float(row.get("eval_mean"))] if value is not None]
 
 
 def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, label: str) -> str:
@@ -1677,10 +1929,7 @@ def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, la
     objective_rows = [row for row in rows if str(row.get("objective") or "") == objective]
     baseline_mean = average(baseline_values)
     if baseline_mean is None or not any(row_has_eval(row) for row in objective_rows):
-        return (
-            f"{label}: pending; complete baseline evals={len(baseline_values)}/{len(baseline_rows)}, "
-            f"complete {objective} evals={sum(1 for row in objective_rows if row_has_eval(row))}/{len(objective_rows)}."
-        )
+        return f"{label}: pending; complete baseline evals={len(baseline_values)}/{len(baseline_rows)}, complete {objective} evals={sum(1 for row in objective_rows if row_has_eval(row))}/{len(objective_rows)}."
 
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in objective_rows:
@@ -1690,18 +1939,9 @@ def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, la
         groups.items(),
         key=lambda item: coerce_float(item[0][0] or item[0][1]) or 0.0,
     ):
-        values = [
-            value
-            for row in group_rows
-            if row_has_eval(row)
-            for value in [coerce_float(row.get("eval_mean"))]
-            if value is not None
-        ]
+        values = [value for row in group_rows if row_has_eval(row) for value in [coerce_float(row.get("eval_mean"))] if value is not None]
         if not values:
-            parts.append(
-                f"{condition_label(objective, lambda_obs, lambda_latent)} pending "
-                f"(complete evals 0/{len(group_rows)})"
-            )
+            parts.append(f"{condition_label(objective, lambda_obs, lambda_latent)} pending (complete evals 0/{len(group_rows)})")
             continue
         objective_mean = average(values)
         if objective_mean is None:
@@ -1713,16 +1953,8 @@ def objective_eval_interpretation(rows: list[dict[str, Any]], objective: str, la
             direction = "negative so far"
         else:
             direction = "roughly tied so far"
-        parts.append(
-            f"{condition_label(objective, lambda_obs, lambda_latent)} {direction}; "
-            f"mean eval {objective_mean:.4f} vs baseline {baseline_mean:.4f}, "
-            f"delta {delta:+.4f} (complete evals {len(values)}/{len(group_rows)})"
-        )
-    return (
-        f"{label}: "
-        + "; ".join(parts)
-        + f". Baseline complete evals {len(baseline_values)}/{len(baseline_rows)}."
-    )
+        parts.append(f"{condition_label(objective, lambda_obs, lambda_latent)} {direction}; mean eval {objective_mean:.4f} vs baseline {baseline_mean:.4f}, delta {delta:+.4f} (complete evals {len(values)}/{len(group_rows)})")
+    return f"{label}: " + "; ".join(parts) + f". Baseline complete evals {len(baseline_values)}/{len(baseline_rows)}."
 
 
 def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
@@ -1730,73 +1962,29 @@ def diagnostic_interpretation(rows: list[dict[str, Any]]) -> str:
     objective_rows = [row for row in rows if str(row.get("objective") or "") == objective]
     diagnostic_rows = [row for row in objective_rows if row_has_diagnostic(row)]
     if not diagnostic_rows:
-        return (
-            "GRPO baseline world-model state changes: pending; "
-            f"0/{len(objective_rows)} baseline run(s) have complete checkpoint diagnostics."
-        )
+        return f"GRPO baseline world-model state changes: pending; 0/{len(objective_rows)} baseline run(s) have complete checkpoint diagnostics."
 
-    delta_ce = [
-        value
-        for row in diagnostic_rows
-        for value in [coerce_float(row.get("diagnostic_delta_token_mean_ce"))]
-        if value is not None
-    ]
-    delta_cosine = [
-        value
-        for row in diagnostic_rows
-        for value in [coerce_float(row.get("diagnostic_delta_action_obs_cosine"))]
-        if value is not None
-    ]
-    ce_gaps = [
-        value
-        for row in diagnostic_rows
-        for value in [coerce_float(row.get("diagnostic_success_failure_ce_gap"))]
-        if value is not None
-    ]
-    cosine_gaps = [
-        value
-        for row in diagnostic_rows
-        for value in [coerce_float(row.get("diagnostic_success_failure_cosine_gap"))]
-        if value is not None
-    ]
+    delta_ce = [value for row in diagnostic_rows for value in [coerce_float(row.get("diagnostic_delta_token_mean_ce"))] if value is not None]
+    delta_cosine = [value for row in diagnostic_rows for value in [coerce_float(row.get("diagnostic_delta_action_obs_cosine"))] if value is not None]
+    ce_gaps = [value for row in diagnostic_rows for value in [coerce_float(row.get("diagnostic_success_failure_ce_gap"))] if value is not None]
+    cosine_gaps = [value for row in diagnostic_rows for value in [coerce_float(row.get("diagnostic_success_failure_cosine_gap"))] if value is not None]
     if delta_ce or delta_cosine or ce_gaps or cosine_gaps:
         parts = []
         if delta_ce:
-            parts.append(
-                "token CE delta mean "
-                f"{average(delta_ce):+.4f} across {len(delta_ce)} baseline run(s)"
-            )
+            parts.append(f"token CE delta mean {average(delta_ce):+.4f} across {len(delta_ce)} baseline run(s)")
         if delta_cosine:
-            parts.append(
-                "action-observation cosine delta mean "
-                f"{average(delta_cosine):+.4f} across {len(delta_cosine)} baseline run(s)"
-            )
+            parts.append(f"action-observation cosine delta mean {average(delta_cosine):+.4f} across {len(delta_cosine)} baseline run(s)")
         if ce_gaps:
-            parts.append(
-                "failure-success CE gap mean "
-                f"{average(ce_gaps):+.4f} across {len(ce_gaps)} run(s) "
-                f"({sum(1 for value in ce_gaps if value > 0)} positive, "
-                f"{sum(1 for value in ce_gaps if value < 0)} negative)"
-            )
+            parts.append(f"failure-success CE gap mean {average(ce_gaps):+.4f} across {len(ce_gaps)} run(s) ({sum(1 for value in ce_gaps if value > 0)} positive, {sum(1 for value in ce_gaps if value < 0)} negative)")
         if cosine_gaps:
-            parts.append(
-                "success-failure cosine gap mean "
-                f"{average(cosine_gaps):+.4f} across {len(cosine_gaps)} run(s) "
-                f"({sum(1 for value in cosine_gaps if value > 0)} positive, "
-                f"{sum(1 for value in cosine_gaps if value < 0)} negative)"
-            )
+            parts.append(f"success-failure cosine gap mean {average(cosine_gaps):+.4f} across {len(cosine_gaps)} run(s) ({sum(1 for value in cosine_gaps if value > 0)} positive, {sum(1 for value in cosine_gaps if value < 0)} negative)")
         return (
             "GRPO baseline world-model state changes: checkpoint/state diagnostics are quantified for "
-            f"{len(diagnostic_rows)}/{len(objective_rows)} baseline run(s); "
-            + "; ".join(parts)
-            + ". Positive CE gap means failure trajectories have higher CE than success trajectories; "
+            f"{len(diagnostic_rows)}/{len(objective_rows)} baseline run(s); " + "; ".join(parts) + ". Positive CE gap means failure trajectories have higher CE than success trajectories; "
             "positive cosine gap means success trajectories have higher action-observation cosine. "
             "This diagnostic is for vanilla GRPO baseline state changes, not obs_ce auxiliary runs."
         )
-    return (
-        "GRPO baseline world-model state changes: partial evidence available; checkpoint diagnostics exist, "
-        "but success/failure gap fields are not populated."
-    )
+    return "GRPO baseline world-model state changes: partial evidence available; checkpoint diagnostics exist, but success/failure gap fields are not populated."
 
 
 def latent_interpretation(rows: list[dict[str, Any]]) -> str:
@@ -1807,45 +1995,22 @@ def latent_interpretation(rows: list[dict[str, Any]]) -> str:
         return f"Latent alignment: pending; complete latent eval10x results 0/{len(latent_rows)}."
     latent_diagnostic_rows = [row for row in latent_rows if row_has_diagnostic(row)]
     if not latent_diagnostic_rows:
-        return (
-            "Latent alignment: complete eval evidence exists, but latent checkpoint diagnostics are still pending "
-            f"(complete evals {len(latent_values)}/{len(latent_rows)})."
-        )
+        return f"Latent alignment: complete eval evidence exists, but latent checkpoint diagnostics are still pending (complete evals {len(latent_values)}/{len(latent_rows)})."
     baseline_mean = average(baseline_values)
     latent_mean = average(latent_values)
     eval_part = f"complete evals {len(latent_values)}/{len(latent_rows)}"
     if baseline_mean is not None and latent_mean is not None:
-        eval_part = (
-            f"mean eval {latent_mean:.4f} vs baseline {baseline_mean:.4f}, "
-            f"delta {latent_mean - baseline_mean:+.4f}; complete evals {len(latent_values)}/{len(latent_rows)}"
-        )
-    ce_deltas = [
-        value
-        for row in latent_diagnostic_rows
-        for value in [coerce_float(row.get("diagnostic_delta_token_mean_ce"))]
-        if value is not None
-    ]
-    cosine_deltas = [
-        value
-        for row in latent_diagnostic_rows
-        for value in [coerce_float(row.get("diagnostic_delta_action_obs_cosine"))]
-        if value is not None
-    ]
+        eval_part = f"mean eval {latent_mean:.4f} vs baseline {baseline_mean:.4f}, delta {latent_mean - baseline_mean:+.4f}; complete evals {len(latent_values)}/{len(latent_rows)}"
+    ce_deltas = [value for row in latent_diagnostic_rows for value in [coerce_float(row.get("diagnostic_delta_token_mean_ce"))] if value is not None]
+    cosine_deltas = [value for row in latent_diagnostic_rows for value in [coerce_float(row.get("diagnostic_delta_action_obs_cosine"))] if value is not None]
     diagnostic_parts = []
     if ce_deltas:
         diagnostic_parts.append(f"CE delta mean {average(ce_deltas):+.4f}")
     if cosine_deltas:
         diagnostic_parts.append(f"cosine delta mean {average(cosine_deltas):+.4f}")
-    diagnostic_part = (
-        f"{'; '.join(diagnostic_parts)} across {len(latent_diagnostic_rows)} latent diagnostic run(s)"
-        if diagnostic_parts
-        else f"{len(latent_diagnostic_rows)} latent diagnostic run(s)"
-    )
+    diagnostic_part = f"{'; '.join(diagnostic_parts)} across {len(latent_diagnostic_rows)} latent diagnostic run(s)" if diagnostic_parts else f"{len(latent_diagnostic_rows)} latent diagnostic run(s)"
     evidence = "eval and diagnostic evidence" if len(latent_values) == len(latent_rows) else "partial eval and diagnostic evidence"
-    return (
-        f"Latent alignment: {evidence} is available; {eval_part}; "
-        f"{diagnostic_part}."
-    )
+    return f"Latent alignment: {evidence} is available; {eval_part}; {diagnostic_part}."
 
 
 def goal_rd_deliverable_status(
@@ -1864,8 +2029,7 @@ def goal_rd_deliverable_status(
         ("Branch name", branch or "(unknown)"),
         (
             "Code/config summary",
-            "obs CE objective, latent hidden-state objective, rollout transition dumps, "
-            "checkpoint diagnostics, and report aggregation are tracked in this branch",
+            "obs CE objective, latent hidden-state objective, rollout transition dumps, checkpoint diagnostics, and report aggregation are tracked in this branch",
         ),
         (
             "Exact commands/configs",
@@ -1873,13 +2037,11 @@ def goal_rd_deliverable_status(
         ),
         (
             "Result table status",
-            f"{eval_count}/{expected_count} tracked run(s) have eval results; eval readiness "
-            f"{dict(sorted(eval_readiness.items()))}",
+            f"{eval_count}/{expected_count} tracked run(s) have eval results; eval readiness {dict(sorted(eval_readiness.items()))}",
         ),
         (
             "Diagnostic paths status",
-            f"{diagnostic_count}/{expected_count} tracked run(s) have checkpoint diagnostics; "
-            f"diagnostic readiness {dict(sorted(diagnostic_readiness.items()))}",
+            f"{diagnostic_count}/{expected_count} tracked run(s) have checkpoint diagnostics; diagnostic readiness {dict(sorted(diagnostic_readiness.items()))}",
         ),
         ("Raw observation CE interpretation", objective_eval_interpretation(tracked_rows, "obs_ce", "Raw observation CE")),
         ("World-model feature interpretation", diagnostic_interpretation(tracked_rows)),
@@ -2072,20 +2234,14 @@ def render_markdown(
             lines.append(f"- {readiness}: `{count}`")
         lines.append("")
 
-    diagnostic_command_rows = [
-        row
-        for row in scoped_rows
-        if row.get("diagnostic_command") and not has_diagnostic_result(row)
-    ]
+    diagnostic_command_rows = [row for row in scoped_rows if row.get("diagnostic_command") and not has_diagnostic_result(row)]
     if diagnostic_command_rows:
         lines.append("## Diagnostic Commands")
         lines.append("")
         for row in diagnostic_command_rows:
             transition_jsonl = str(row.get("diagnostic_transition_jsonl") or "")
             checkpoint_root = str(row.get("diagnostic_checkpoint_root") or "")
-            lines.append(
-                f"- `{row.get('run_key', '')}` transitions `{transition_jsonl}` checkpoint root `{checkpoint_root}`: `{row['diagnostic_command']}`"
-            )
+            lines.append(f"- `{row.get('run_key', '')}` transitions `{transition_jsonl}` checkpoint root `{checkpoint_root}`: `{row['diagnostic_command']}`")
         lines.append("")
 
     expected_rows = [row for row in rows if row.get("expected") == "yes"]

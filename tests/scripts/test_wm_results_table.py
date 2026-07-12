@@ -203,13 +203,14 @@ def test_obs_ce_l_token_is_not_misclassified_by_disabled_latent_config(tmp_path)
     module.annotate_artifact_coverage(rows)
     by_key = {row["run_key"]: row for row in rows}
 
-    assert len(rows) == 11
+    assert len(rows) == 12
     assert "latent_l0p03_s0" not in by_key
     row = by_key["obs_ce_l0p03_s0"]
     assert row["objective"] == "obs_ce"
     assert row["lambda_obs"] == "0.03"
     assert row["lambda_latent"] == ""
     assert row["has_train_log"] == "yes"
+    assert row.get("expected") != "yes"
 
 
 def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
@@ -237,10 +238,7 @@ def test_annotate_eval_readiness_generates_command_only_when_ready(tmp_path):
     module.annotate_eval_readiness(rows, eval_cuda="4,5", eval_n="10", eval_script="scripts/eval10x_alfworld.sh")
 
     assert ready["eval_readiness"] == "ready_for_eval"
-    assert ready["eval_command"] == (
-        "CKPT=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150 "
-        "LABEL=wmlat_l0p001_s1 CUDA_VISIBLE_DEVICES=4,5 N_EVALS=10 bash scripts/eval10x_alfworld.sh"
-    )
+    assert ready["eval_command"] == ("CKPT=/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1/global_step_150 LABEL=wmlat_l0p001_s1 CUDA_VISIBLE_DEVICES=4,5 N_EVALS=10 bash scripts/eval10x_alfworld.sh")
     assert ready["eval_target_checkpoint_path"].endswith("global_step_150")
     assert waiting["eval_readiness"] == "waiting_for_checkpoint"
     assert waiting["eval_command"] == ""
@@ -392,14 +390,8 @@ def test_annotate_train_commands_generates_standard_goal_rd_commands():
     module.annotate_train_commands(rows, train_cuda="6,7", train_script="/root/grpo/run_seed_alfworld_official.sh")
 
     assert rows[0]["train_command"] == "TAG=official_4to5 CUDA_VISIBLE_DEVICES=6,7 bash /root/grpo/run_seed_alfworld_official.sh 0"
-    assert rows[1]["train_command"] == (
-        "TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
-        "bash /root/grpo/run_seed_alfworld_official.sh 1"
-    )
-    assert rows[2]["train_command"] == (
-        "TAG=wmlat_l0p001_s1 LAMBDA_LATENT=0.001 CUDA_VISIBLE_DEVICES=4,5 "
-        "bash /root/grpo/run_seed_alfworld_official.sh 1"
-    )
+    assert rows[1]["train_command"] == ("TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 bash /root/grpo/run_seed_alfworld_official.sh 1")
+    assert rows[2]["train_command"] == ("TAG=wmlat_l0p001_s1 LAMBDA_LATENT=0.001 CUDA_VISIBLE_DEVICES=4,5 bash /root/grpo/run_seed_alfworld_official.sh 1")
 
 
 def test_annotate_train_commands_can_request_rollout_dumps():
@@ -421,210 +413,38 @@ def test_annotate_train_commands_can_request_rollout_dumps():
         dump_rollouts=True,
     )
 
-    assert rows[0]["train_command"] == (
-        "TAG=wmlat_l0p001_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_LATENT=0.001 CUDA_VISIBLE_DEVICES=4,5 "
-        "bash /root/grpo/run_seed_alfworld_official.sh 1"
-    )
+    assert rows[0]["train_command"] == ("TAG=wmlat_l0p001_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_LATENT=0.001 CUDA_VISIBLE_DEVICES=4,5 bash /root/grpo/run_seed_alfworld_official.sh 1")
 
 
-def test_annotate_diagnostic_commands_uses_rollout_dir_when_available(tmp_path):
+def test_legacy_shared_transition_resolver_and_command_are_removed():
     module = _load_module()
-    work_root = tmp_path / "work"
-    checkpoint_root = work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1"
-    rollout_dir = work_root / "logs" / "world_model_rollouts" / "grpo_qwen2.5_1.5b_alfworld_seed1_wmlat_l0p001_s1"
-    rollout_dir.mkdir(parents=True)
-    transition_jsonl = rollout_dir / "150.wm_transitions.jsonl"
-    transition_jsonl.write_text('{"ok": true}\n', encoding="utf-8")
+    assert not hasattr(module, "transition_jsonl_from_row")
+    assert not hasattr(module, "build_diagnostic_command")
+
+
+def test_annotate_diagnostic_commands_never_emits_legacy_command():
+    module = _load_module()
     rows = [
+        {"run_key": "missing"},
         {
-            "run_key": "latent_l0p001_s1",
-            "tag": "wmlat_l0p001_s1",
-            "latest_checkpoint_path": str(checkpoint_root / "global_step_150"),
-            "rollout_data_dir": str(rollout_dir),
-        }
+            "run_key": "legacy",
+            "diagnostic_summary_path": "/legacy/summary.json",
+            "diagnostic_command": "TRANSITIONS_JSONL=/legacy/shared.jsonl old",
+        },
     ]
 
     module.annotate_diagnostic_commands(
         rows,
-        work_root=str(work_root),
+        work_root="/work",
         diagnostic_script="scripts/run_wm_checkpoint_diagnostics.sh",
         diagnostic_steps="init 30 60 90 120 150",
         transition_step="150",
     )
 
-    assert rows[0]["diagnostic_checkpoint_root"] == str(checkpoint_root)
-    assert rows[0]["diagnostic_transition_jsonl"] == str(transition_jsonl)
-    assert rows[0]["diagnostic_readiness"] == "ready_for_diagnostic"
-    assert rows[0]["diagnostic_command"] == (
-        "CUDA_VISIBLE_DEVICES='<free_2gpu_pair>' "
-        f"TRANSITIONS_JSONL={transition_jsonl} "
-        f"CKPT_ROOT={checkpoint_root} "
-        "TAG=wmlat_l0p001_s1 STEPS='init 30 60 90 120 150' bash scripts/run_wm_checkpoint_diagnostics.sh"
-    )
-
-    markdown = module.render_markdown(rows)
-    assert "## Diagnostic Commands" in markdown
-    assert "latent_l0p001_s1" in markdown
-    assert "150.wm_transitions.jsonl" in markdown
-
-
-def test_transition_jsonl_uses_baseline_validation_data_dir_before_smoke_fallback(tmp_path):
-    module = _load_module()
-    work_root = tmp_path / "work"
-    validation_dir = work_root / "logs" / "validation_rollouts" / "official_s2"
-    validation_jsonl = validation_dir / "150.val.wm_transitions.jsonl"
-    validation_jsonl.parent.mkdir(parents=True)
-    validation_jsonl.write_text('{"split": "val"}\n', encoding="utf-8")
-    fallback_jsonl = work_root / module.BASELINE_VALIDATION_TRANSITION_DUMP
-    fallback_jsonl.parent.mkdir(parents=True)
-    fallback_jsonl.write_text('{"split": "old"}\n', encoding="utf-8")
-
-    row = {
-        "objective": "grpo_baseline",
-        "validation_data_dir": str(validation_dir),
-        "latest_checkpoint_path": str(
-            work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2" / "global_step_150"
-        ),
-    }
-
-    assert (
-        module.transition_jsonl_from_row(row, work_root=str(work_root), transition_step="150")
-        == str(validation_jsonl)
-    )
-
-
-def test_transition_jsonl_prefers_baseline_validation_data_dir_over_rollout_dir(tmp_path):
-    module = _load_module()
-    work_root = tmp_path / "work"
-    validation_dir = work_root / "logs" / "validation_rollouts" / "official_s2"
-    rollout_dir = work_root / "logs" / "world_model_rollouts" / "official_s2"
-    validation_jsonl = validation_dir / "150.val.wm_transitions.jsonl"
-    rollout_jsonl = rollout_dir / "150.wm_transitions.jsonl"
-    validation_jsonl.parent.mkdir(parents=True)
-    rollout_jsonl.parent.mkdir(parents=True)
-    validation_jsonl.write_text('{"split": "val"}\n', encoding="utf-8")
-    rollout_jsonl.write_text('{"split": "train"}\n', encoding="utf-8")
-
-    row = {
-        "objective": "grpo_baseline",
-        "validation_data_dir": str(validation_dir),
-        "rollout_data_dir": str(rollout_dir),
-        "latest_checkpoint_path": str(
-            work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2" / "global_step_150"
-        ),
-    }
-
-    assert (
-        module.transition_jsonl_from_row(row, work_root=str(work_root), transition_step="150")
-        == str(validation_jsonl)
-    )
-
-
-def test_transition_jsonl_reports_missing_configured_baseline_validation_dump(tmp_path):
-    module = _load_module()
-    work_root = tmp_path / "work"
-    validation_dir = work_root / "logs" / "validation_rollouts" / "official_s2"
-    fallback_jsonl = work_root / module.BASELINE_VALIDATION_TRANSITION_DUMP
-    fallback_jsonl.parent.mkdir(parents=True)
-    fallback_jsonl.write_text('{"split": "old"}\n', encoding="utf-8")
-
-    row = {
-        "objective": "grpo_baseline",
-        "validation_data_dir": str(validation_dir),
-        "latest_checkpoint_path": str(
-            work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2" / "global_step_150"
-        ),
-    }
-
-    assert module.transition_jsonl_from_row(row, work_root=str(work_root), transition_step="150") == str(
-        validation_dir / "150.val.wm_transitions.jsonl"
-    )
-
-
-def test_annotate_diagnostic_commands_infers_standard_rollout_path_and_waits_for_step150(tmp_path):
-    module = _load_module()
-    work_root = tmp_path / "work"
-    ready_checkpoint_root = work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p05_s0"
-    ready_rollout_dir = work_root / "logs" / "world_model_rollouts" / ready_checkpoint_root.name
-    ready_rollout_dir.mkdir(parents=True)
-    ready_transition_jsonl = ready_rollout_dir / "150.wm_transitions.jsonl"
-    ready_transition_jsonl.write_text('{"ok": true}\n', encoding="utf-8")
-    missing_checkpoint_root = work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed2_official_s2"
-    baseline_val_jsonl = (
-        work_root
-        / "logs"
-        / "world_model_diagnostics"
-        / "wm_valdump_smoke_s0_step150"
-        / "150.val.wm_transitions.jsonl"
-    )
-    baseline_val_jsonl.parent.mkdir(parents=True)
-    baseline_val_jsonl.write_text('{"split": "val"}\n', encoding="utf-8")
-    non_baseline_missing_checkpoint_root = (
-        work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed1_wm_obs_ce_l0p05_s1"
-    )
-    rows = [
-        {
-            "run_key": "obs_ce_l0p05_s0",
-            "tag": "wm_obs_ce_l0p05_s0",
-            "objective": "obs_ce",
-            "latest_checkpoint_path": str(ready_checkpoint_root / "global_step_150"),
-        },
-        {
-            "run_key": "obs_ce_l0p03_s0",
-            "tag": "wm_obs_ce_l0p03_s0",
-            "objective": "obs_ce",
-            "latest_checkpoint_path": str(work_root / "checkpoints" / "grpo_qwen2.5_1.5b_alfworld_seed0_wm_obs_ce_l0p03_s0" / "global_step_150"),
-            "diagnostic_summary_path": "/work/logs/world_model_diagnostics/wm_obs_ce_l0p03_s0/checkpoint_scores_summary.json",
-            "diagnostic_final_step": "150",
-            "diagnostic_token_mean_ce": 1.4,
-            "diagnostic_action_obs_cosine": 0.4,
-            "diagnostic_command": "python existing.py",
-        },
-        {
-            "run_key": "latent_l0p001_s0",
-            "tag": "wmlat_l0p001_s0",
-            "objective": "latent",
-            "latest_checkpoint_step": 120,
-            "latest_checkpoint_path": "/work/checkpoints/grpo_qwen2.5_1.5b_alfworld_seed0_wmlat_l0p001_s0/global_step_120",
-        },
-        {
-            "run_key": "grpo_baseline_s2",
-            "tag": "official_s2",
-            "objective": "grpo_baseline",
-            "latest_checkpoint_path": str(missing_checkpoint_root / "global_step_150"),
-        },
-        {
-            "run_key": "obs_ce_l0p05_s1",
-            "tag": "wm_obs_ce_l0p05_s1",
-            "objective": "obs_ce",
-            "latest_checkpoint_path": str(non_baseline_missing_checkpoint_root / "global_step_150"),
-        },
-    ]
-
-    module.annotate_diagnostic_commands(
-        rows,
-        work_root=str(work_root),
-        diagnostic_script="scripts/run_wm_checkpoint_diagnostics.sh",
-        diagnostic_steps="init 60 120 150",
-        transition_step="150",
-    )
-
-    assert rows[0]["diagnostic_transition_jsonl"] == str(ready_transition_jsonl)
-    assert rows[0]["diagnostic_readiness"] == "ready_for_diagnostic"
-    assert "STEPS='init 60 120 150'" in rows[0]["diagnostic_command"]
-    assert rows[1]["diagnostic_command"] == "python existing.py"
-    assert rows[1]["diagnostic_readiness"] == "diagnosed"
-    assert rows[2].get("diagnostic_command") in ("", None)
-    assert rows[2]["diagnostic_readiness"] == "waiting_for_checkpoint"
-    assert rows[3]["diagnostic_transition_jsonl"] == str(baseline_val_jsonl)
-    assert rows[3]["diagnostic_readiness"] == "ready_for_diagnostic"
-    assert "CUDA_VISIBLE_DEVICES='<free_2gpu_pair>'" in rows[3]["diagnostic_command"]
-    assert f"TRANSITIONS_JSONL={baseline_val_jsonl}" in rows[3]["diagnostic_command"]
-    assert rows[4]["diagnostic_transition_jsonl"] == str(
-        work_root / "logs" / "world_model_rollouts" / non_baseline_missing_checkpoint_root.name / "150.wm_transitions.jsonl"
-    )
-    assert rows[4].get("diagnostic_command") in ("", None)
-    assert rows[4]["diagnostic_readiness"] == "missing_transition_dump"
+    assert rows[0]["diagnostic_readiness"] == "full_protocol_required"
+    assert rows[1]["diagnostic_readiness"] == "legacy_diagnostic_rejected"
+    assert all(row["diagnostic_command"] == "" for row in rows)
+    assert all(row["diagnostic_transition_jsonl"] == "" for row in rows)
 
 
 def test_objective_coverage_summarizes_eval_and_diagnostics():
@@ -668,20 +488,20 @@ def test_objective_coverage_summarizes_eval_and_diagnostics():
 
     assert coverage[0]["objective"] == "grpo_baseline"
     assert coverage[0]["evaluated"] == 1
-    assert coverage[0]["diagnosed"] == 1
+    assert coverage[0]["diagnosed"] == 0
     assert coverage[1]["objective"] == "obs_ce"
     assert coverage[1]["seeds"] == "0,1"
     assert coverage[1]["ready_for_eval"] == 1
     assert coverage[1]["waiting_for_checkpoint"] == 1
     assert coverage[2]["objective"] == "latent"
     assert coverage[2]["eval_incomplete"] == 1
-    assert coverage[2]["diagnosed"] == 1
+    assert coverage[2]["diagnosed"] == 0
 
     markdown = module.render_markdown(rows)
     assert "## Objective Coverage" in markdown
-    assert "| grpo_baseline | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 1 |" in markdown
+    assert "| grpo_baseline | 1 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |" in markdown
     assert "| obs_ce | 2 | 0,1 | 0 | 1 | 1 | 0 | 0 | 0 |" in markdown
-    assert "| latent | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 1 |" in markdown
+    assert "| latent | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 |" in markdown
 
 
 def test_result_summary_groups_eval_by_objective_and_lambda():
@@ -783,9 +603,7 @@ def test_goal_rd_deliverable_status_maps_report_requirements():
     assert "waiting_for_checkpoint" in status["Result table status"]
     assert "obs_ce lambda_obs=0.01 positive so far" in status["Raw observation CE interpretation"]
     assert "complete evals 1/1" in status["Raw observation CE interpretation"]
-    assert "failure-success CE gap mean +0.2000 across 1 run(s) (1 positive, 0 negative)" in status[
-        "World-model feature interpretation"
-    ]
+    assert status["World-model feature interpretation"] == "GRPO baseline world-model state changes: pending; 0/1 baseline run(s) have complete checkpoint diagnostics."
     assert status["Latent alignment interpretation"] == "Latent alignment: pending; complete latent eval10x results 0/1."
 
     markdown = module.render_markdown(rows, branch="world-model-latent-objective")
@@ -820,9 +638,7 @@ def test_latent_interpretation_summarizes_eval_and_diagnostic_deltas():
 
     interpretation = module.latent_interpretation(rows)
 
-    assert "mean eval 0.6600 vs baseline 0.7100, delta -0.0500" in interpretation
-    assert "CE delta mean -0.0100" in interpretation
-    assert "cosine delta mean -0.0400" in interpretation
+    assert interpretation == "Latent alignment: complete eval evidence exists, but latent checkpoint diagnostics are still pending (complete evals 1/1)."
 
 
 def test_expected_run_coverage_reports_missing_artifacts():
@@ -851,13 +667,13 @@ def test_expected_run_coverage_reports_missing_artifacts():
     assert rows[0]["has_train_log"] == "no"
     assert rows[0]["has_eval"] == "no"
     assert rows[0]["has_diagnostic"] == "no"
-    assert rows[0]["diagnostic_readiness"] == "missing_training_log"
+    assert rows[0]["diagnostic_readiness"] == "full_protocol_required"
     assert rows[0]["missing_artifacts"] == "train_log,eval,diagnostic"
     assert rows[0]["final_report_readiness"] == "missing:train_log,eval,diagnostic"
 
     markdown = module.render_markdown(rows)
     assert "## Expected Run Coverage" in markdown
-    assert "| obs_ce_l0p01_s0 | obs_ce | 0 | no | no | no | missing_training_log | missing_training_log | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |" in markdown
+    assert "| obs_ce_l0p01_s0 | obs_ce | 0 | no | no | no | missing_training_log | full_protocol_required | train_log,eval,diagnostic | missing:train_log,eval,diagnostic |" in markdown
 
 
 def test_expected_run_merges_with_existing_artifacts(tmp_path):
@@ -907,9 +723,48 @@ def test_expected_run_merges_with_existing_artifacts(tmp_path):
     assert rows[0]["has_train_log"] == "yes"
     assert rows[0]["has_eval"] == "yes"
     assert rows[0]["has_diagnostic"] == "no"
-    assert rows[0]["diagnostic_readiness"] == "missing_transition_dump"
+    assert rows[0]["diagnostic_readiness"] == "full_protocol_required"
     assert rows[0]["missing_artifacts"] == "diagnostic"
     assert rows[0]["final_report_readiness"] == "missing:diagnostic"
+
+
+def test_direct_and_predictor_latent_artifacts_never_merge(tmp_path):
+    module = _load_module()
+    direct_log = tmp_path / "grpo_qwen2.5_1.5b_alfworld_seed0_wmlatnp_direct_l0p001_s0_20260712_010203.log"
+    direct_log.write_text(
+        "\n".join(
+            [
+                "RUN_WM_183 kind=latent seed=0 tag=wmlatnp_direct_l0p001_s0 value=0.001",
+                "actor_rollout_ref.actor.world_model.latent_use_predictor=False",
+                "Training Progress: 1/150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    predictor_log = tmp_path / "grpo_qwen2.5_1.5b_alfworld_seed0_wmlat_l0p001_s0_20260628_010203.log"
+    predictor_log.write_text(
+        "\n".join(
+            [
+                "RUN_WM_LATENT_SEED seed=0 tag=wmlat_l0p001_s0 lambda_latent=0.001",
+                "Training Progress: 150/150",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    rows = module.build_records(
+        eval_paths=[],
+        train_logs=[str(direct_log), str(predictor_log)],
+        diagnostic_paths=[],
+        expected_runs=module.GOAL_RD_EXPECTED_RUNS,
+    )
+    by_key = {row["run_key"]: row for row in rows}
+
+    assert by_key["latent_direct_l0p001_s0"]["tag"] == "wmlatnp_direct_l0p001_s0"
+    assert by_key["latent_direct_l0p001_s0"]["train_log_path"] == str(direct_log)
+    assert by_key["latent_l0p001_s0"]["tag"] == "wmlat_l0p001_s0"
+    assert by_key["latent_l0p001_s0"]["train_log_path"] == str(predictor_log)
+    assert len({by_key["latent_direct_l0p001_s0"]["run_key"], by_key["latent_l0p001_s0"]["run_key"]}) == 2
 
 
 def test_expected_run_allows_tag_variants_without_blocking_conflict(tmp_path):
@@ -978,8 +833,8 @@ def test_expected_run_flags_blocking_metadata_conflicts():
     module.annotate_artifact_coverage(rows)
 
     assert rows[0]["metadata_conflicts"] == "seed=0!=1;lambda_obs=0.01!=0.03"
-    assert rows[0]["missing_artifacts"] == "metadata_conflict"
-    assert rows[0]["final_report_readiness"] == "missing:metadata_conflict"
+    assert rows[0]["missing_artifacts"] == "diagnostic,metadata_conflict"
+    assert rows[0]["final_report_readiness"] == "missing:diagnostic,metadata_conflict"
 
     markdown = module.render_markdown(rows)
     assert "- Metadata conflicts: `seed=0!=1;lambda_obs=0.01!=0.03`" in markdown
@@ -1048,9 +903,7 @@ def test_diagnostic_interpretation_uses_obs_ce_rows_only():
 
     interpretation = module.diagnostic_interpretation(rows)
 
-    assert "1/1 obs_ce run(s)" in interpretation
-    assert "failure-success CE gap mean +0.2000" in interpretation
-    assert "+9.9000" not in interpretation
+    assert interpretation == "GRPO baseline world-model state changes: pending; 0/1 baseline run(s) have complete checkpoint diagnostics."
 
 
 def test_goal_rd_expected_runs_cover_full_matrix():
@@ -1078,28 +931,30 @@ def test_goal_rd_expected_runs_cover_full_matrix():
         "grpo_baseline_s0",
         "grpo_baseline_s1",
         "grpo_baseline_s2",
+        "obs_ce_l0p001_s0",
+        "obs_ce_l0p001_s1",
         "obs_ce_l0p01_s0",
         "obs_ce_l0p01_s1",
-        "obs_ce_l0p03_s0",
-        "obs_ce_l0p03_s1",
-        "obs_ce_l0p05_s0",
-        "obs_ce_l0p05_s1",
-        "latent_l0p001_s0",
-        "latent_l0p001_s1",
+        "latent_direct_l0p001_s0",
+        "latent_direct_l0p001_s1",
+        "latent_direct_l0p005_s0",
+        "latent_direct_l0p005_s1",
     } == run_keys
 
-    obs_l0p05_s1 = next(row for row in rows if row["run_key"] == "obs_ce_l0p05_s1")
-    assert obs_l0p05_s1["objective"] == "obs_ce"
-    assert obs_l0p05_s1["seed"] == "1"
-    assert obs_l0p05_s1["lambda_obs"] == "0.05"
-    assert obs_l0p05_s1["tag"] == "wm_obs_ce_l0p05_s1"
-    assert obs_l0p05_s1["diagnostic_readiness"] == "missing_training_log"
-    assert obs_l0p05_s1["final_report_readiness"] == "missing:train_log,eval,diagnostic"
+    direct_l0p005_s1 = next(row for row in rows if row["run_key"] == "latent_direct_l0p005_s1")
+    assert direct_l0p005_s1["objective"] == "latent"
+    assert direct_l0p005_s1["seed"] == "1"
+    assert direct_l0p005_s1["lambda_latent"] == "0.005"
+    assert direct_l0p005_s1["tag"] == "wmlatnp_direct_l0p005_s1"
+    assert direct_l0p005_s1["diagnostic_readiness"] == "full_protocol_required"
+    assert direct_l0p005_s1["final_report_readiness"] == "missing:train_log,eval,diagnostic"
+    assert "latent_l0p001_s0" not in run_keys
+    assert "latent_l0p001_s1" not in run_keys
 
     coverage = {row["objective"]: row for row in module.objective_coverage(rows)}
     assert coverage["grpo_baseline"]["runs"] == 3
-    assert coverage["obs_ce"]["runs"] == 6
-    assert coverage["latent"]["runs"] == 2
+    assert coverage["obs_ce"]["runs"] == 4
+    assert coverage["latent"]["runs"] == 4
 
 
 def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkeypatch):
@@ -1172,11 +1027,8 @@ def test_main_adds_goal_rd_expected_runs_without_duplicate_rows(tmp_path, monkey
     assert by_key["obs_ce_l0p01_s0"]["has_train_log"] == "yes"
     assert by_key["obs_ce_l0p01_s0"]["has_eval"] == "yes"
     assert by_key["obs_ce_l0p01_s0"]["final_report_readiness"] == "missing:diagnostic"
-    assert by_key["obs_ce_l0p03_s1"]["final_report_readiness"] == "missing:train_log,eval,diagnostic"
-    assert by_key["obs_ce_l0p03_s1"]["train_command"] == (
-        "TAG=wm_obs_ce_l0p03_s1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
-        "bash /root/grpo/run_seed_alfworld_official.sh 1"
-    )
+    assert by_key["latent_direct_l0p005_s1"]["final_report_readiness"] == "missing:train_log,eval,diagnostic"
+    assert by_key["latent_direct_l0p005_s1"]["train_command"] == ("TAG=wmlatnp_direct_l0p005_s1 LAMBDA_LATENT=0.005 CUDA_VISIBLE_DEVICES=6,7 bash /root/grpo/run_seed_alfworld_official.sh 1")
 
 
 def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monkeypatch):
@@ -1264,13 +1116,11 @@ def test_goal_rd_report_preset_discovers_layout_and_expected_runs(tmp_path, monk
         rows = list(csv.DictReader(handle))
     assert len(rows) == 11
     by_key = {row["run_key"]: row for row in rows}
-    assert "latent_l0p01_s0" not in by_key
+    assert "latent_l0p001_s0" not in by_key
+    assert "latent_l0p001_s1" not in by_key
     assert by_key["obs_ce_l0p01_s0"]["has_train_log"] == "yes"
     assert by_key["obs_ce_l0p01_s0"]["has_eval"] == "yes"
-    assert by_key["obs_ce_l0p03_s1"]["train_command"] == (
-        "TAG=wm_obs_ce_l0p03_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_OBS=0.03 CUDA_VISIBLE_DEVICES=6,7 "
-        "bash /root/grpo/run_seed_alfworld_official.sh 1"
-    )
+    assert by_key["latent_direct_l0p005_s1"]["train_command"] == ("TAG=wmlatnp_direct_l0p005_s1 WM_DUMP_ROLLOUTS=1 LAMBDA_LATENT=0.005 CUDA_VISIBLE_DEVICES=6,7 bash /root/grpo/run_seed_alfworld_official.sh 1")
     assert all("smoke" not in row["train_log_path"] for row in rows)
 
 
@@ -1377,7 +1227,7 @@ def test_parse_diagnostic_summary_uses_step150_and_success_gaps(tmp_path):
 
     markdown = module.render_markdown([row])
     assert "- Diagnostic cwd: `/work/verl-agent`" in markdown
-    assert "- Diagnostic chat template kwargs: `{\"enable_thinking\": false}`" in markdown
+    assert '- Diagnostic chat template kwargs: `{"enable_thinking": false}`' in markdown
     assert '- Diagnostic argv: `["wm_score_transition_dump.py","--model-path","/model"]`' in markdown
 
 
@@ -1539,9 +1389,9 @@ def test_parse_diagnostic_summary_does_not_invent_missing_report_paths(tmp_path)
     row.update(_complete_eval(mean=0.72))
     module.annotate_artifact_coverage([row])
 
-    assert row["has_diagnostic"] == "yes"
-    assert row["missing_artifacts"] == "diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
-    assert row["final_report_readiness"] == "missing:diagnostic_report_md,diagnostic_report_csv,diagnostic_report_svg"
+    assert row["has_diagnostic"] == "no"
+    assert row["missing_artifacts"] == "diagnostic"
+    assert row["final_report_readiness"] == "missing:diagnostic"
 
 
 def test_parse_diagnostic_summary_ignores_empty_or_stale_report_paths(tmp_path):
@@ -1660,8 +1510,8 @@ def test_incomplete_diagnostic_summary_does_not_count_as_complete(tmp_path):
     )
     module.annotate_artifact_coverage([row])
 
-    assert row["diagnostic_readiness"] == "ready_for_diagnostic"
-    assert "run_wm_checkpoint_diagnostics.sh" in row["diagnostic_command"]
+    assert row["diagnostic_readiness"] == "legacy_diagnostic_rejected"
+    assert row["diagnostic_command"] == ""
     assert row["has_diagnostic"] == "no"
     assert row["missing_artifacts"] == "diagnostic"
     assert row["final_report_readiness"] == "missing:diagnostic"
@@ -1677,7 +1527,13 @@ def test_zero_token_or_missing_cosine_diagnostic_is_incomplete():
 
     assert not module.row_has_diagnostic(base | {"diagnostic_action_obs_cosine": 0.3, "diagnostic_target_tokens": 0})
     assert not module.row_has_diagnostic(base | {"diagnostic_target_tokens": 20})
-    assert module.row_has_diagnostic(base | {"diagnostic_action_obs_cosine": 0.0, "diagnostic_target_tokens": 20})
+    assert not module.row_has_diagnostic(
+        base
+        | {
+            "diagnostic_action_obs_cosine": 0.0,
+            "diagnostic_target_tokens": 20,
+        }
+    )
 
 
 def test_expand_paths_expands_explicit_glob_paths(tmp_path):
@@ -1925,12 +1781,12 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     markdown = output_md.read_text(encoding="utf-8")
     assert f"- Work root: `{work_root}`" in markdown
     assert "0.7500 +/- 0.0200 (n=10)" in markdown
-    assert "- Diagnostic report: `" in markdown
-    assert "checkpoint_diagnostics_report.md" in markdown
-    assert "- Diagnostic report CSV: `" in markdown
-    assert "checkpoint_diagnostics_report.csv" in markdown
-    assert "- Diagnostic report SVG: `" in markdown
-    assert "checkpoint_diagnostics_report.svg" in markdown
+    assert "- Diagnostic report: `" not in markdown
+    assert "checkpoint_diagnostics_report.md" not in markdown
+    assert "- Diagnostic report CSV: `" not in markdown
+    assert "checkpoint_diagnostics_report.csv" not in markdown
+    assert "- Diagnostic report SVG: `" not in markdown
+    assert "checkpoint_diagnostics_report.svg" not in markdown
     with output_csv.open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 1
@@ -1941,10 +1797,10 @@ def test_main_discovers_standard_layout(tmp_path, monkeypatch):
     assert row["eval_readiness"] == "evaluated"
     assert row["eval_target_checkpoint_path"].endswith("global_step_150")
     assert row["train_step"] == "150"
-    assert row["diagnostic_token_mean_ce"] == "1.4"
-    assert row["diagnostic_delta_token_mean_ce"] == "-0.4"
-    assert row["diagnostic_report_md_path"].endswith("checkpoint_diagnostics_report.md")
-    assert row["diagnostic_report_csv_path"].endswith("checkpoint_diagnostics_report.csv")
-    assert row["diagnostic_report_svg_path"].endswith("checkpoint_diagnostics_report.svg")
+    assert row["diagnostic_token_mean_ce"] == ""
+    assert row["diagnostic_delta_token_mean_ce"] == ""
+    assert row["diagnostic_report_md_path"] == ""
+    assert row["diagnostic_report_csv_path"] == ""
+    assert row["diagnostic_report_svg_path"] == ""
     assert "smoke" not in row["train_log_path"]
-    assert "smoke" not in row["diagnostic_summary_path"]
+    assert row["diagnostic_summary_path"] == ""

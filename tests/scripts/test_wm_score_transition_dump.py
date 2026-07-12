@@ -92,6 +92,23 @@ def test_encode_transitions_masks_only_active_next_observation_tokens():
     assert encoded[1].episode_success is False
 
 
+def test_encoding_records_model_tokenizer_overlap_and_truncation():
+    module = _load_module()
+    tokenizer = FakeTokenizer()
+
+    encoded = module.encode_transitions(
+        [_row(wm_prev_obs_text="same room", wm_action_text="look", wm_next_obs_text="same room")],
+        tokenizer=tokenizer,
+        max_length=12,
+    )[0]
+
+    assert encoded.prev_next_token_jaccard == 1.0
+    assert 0.0 <= encoded.action_next_token_jaccard <= 1.0
+    assert encoded.target_truncated is True
+    assert encoded.target_tokens_original > encoded.target_tokens
+    assert encoded.obs_end_pos is None
+
+
 def test_string_boolean_fields_are_normalized():
     module = _load_module()
     tokenizer = FakeTokenizer()
@@ -245,62 +262,14 @@ def test_atomic_write_preserves_existing_summary_on_replace_failure(tmp_path, mo
     assert list(tmp_path.glob(".checkpoint_scores_summary.json.*.tmp")) == []
 
 
-def test_load_world_model_predictor_from_checkpoint_extra_state(tmp_path):
-    torch = pytest.importorskip("torch")
+def test_scorer_has_no_predictor_loading_path():
     module = _load_module()
-    actor_dir = tmp_path / "actor"
-    actor_dir.mkdir()
-    predictor_state = {
-        "net.0.weight": torch.ones(4),
-        "net.0.bias": torch.zeros(4),
-        "net.1.weight": torch.zeros(3, 4),
-        "net.1.bias": torch.zeros(3),
-        "net.4.weight": torch.zeros(4, 3),
-        "net.4.bias": torch.tensor([0.0, 1.0, 0.0, 0.0]),
-    }
-    torch.save(
-        {"custom_extra_state": {"world_model_predictor": predictor_state}},
-        actor_dir / "extra_state_world_size_1_rank_0.pt",
-    )
 
-    predictor = module.load_world_model_predictor(str(actor_dir), device="cpu", dtype_name="float32")
-
-    assert predictor is not None
-    hidden = torch.zeros(1, 4)
-    assert torch.allclose(predictor(hidden), torch.tensor([[0.0, 1.0, 0.0, 0.0]]))
+    assert not hasattr(module, "load_world_model_predictor")
+    assert not hasattr(module, "build_world_model_predictor")
 
 
-def test_load_world_model_predictor_respects_non_residual_checkpoint_config(tmp_path):
-    torch = pytest.importorskip("torch")
-    module = _load_module()
-    actor_dir = tmp_path / "actor"
-    actor_dir.mkdir()
-    predictor_state = {
-        "net.0.weight": torch.ones(4),
-        "net.0.bias": torch.zeros(4),
-        "net.1.weight": torch.zeros(3, 4),
-        "net.1.bias": torch.zeros(3),
-        "net.4.weight": torch.zeros(4, 3),
-        "net.4.bias": torch.tensor([0.0, 1.0, 0.0, 0.0]),
-    }
-    torch.save(
-        {
-            "custom_extra_state": {
-                "world_model_predictor": predictor_state,
-                "world_model_predictor_config": {"residual": False},
-            }
-        },
-        actor_dir / "extra_state_world_size_1_rank_0.pt",
-    )
-
-    predictor = module.load_world_model_predictor(str(actor_dir), device="cpu", dtype_name="float32")
-
-    assert predictor is not None
-    hidden = torch.tensor([[2.0, 0.0, 0.0, 0.0]])
-    assert torch.allclose(predictor(hidden), torch.tensor([[0.0, 1.0, 0.0, 0.0]]))
-
-
-def test_score_batch_uses_loaded_world_model_predictor_for_cosine():
+def test_score_batch_exposes_raw_cosine_only():
     torch = pytest.importorskip("torch")
     module = _load_module()
 
@@ -312,9 +281,6 @@ def test_score_batch_uses_loaded_world_model_predictor_for_cosine():
             hidden[:, 2, :] = torch.tensor([0.0, 1.0], device=input_ids.device)
             return types.SimpleNamespace(logits=logits, hidden_states=[hidden])
 
-    predictor = torch.nn.Linear(2, 2, bias=False)
-    with torch.no_grad():
-        predictor.weight.copy_(torch.tensor([[0.0, 0.0], [1.0, 0.0]]))
     encoded = module.EncodedTransition(
         transition_index=0,
         row=_row(),
@@ -335,10 +301,9 @@ def test_score_batch_uses_loaded_world_model_predictor_for_cosine():
         checkpoint=module.CheckpointSpec(label="step1", path="/ckpt/global_step_1"),
         device="cpu",
         skip_entropy=True,
-        world_model_predictor=predictor,
     )
 
     assert rows[0]["raw_action_obs_cosine"] == 0.0
-    assert rows[0]["pred_obs_cosine"] == 1.0
-    assert rows[0]["action_obs_cosine"] == 1.0
-    assert rows[0]["world_model_predictor_loaded"] is True
+    assert rows[0]["action_obs_cosine"] == 0.0
+    assert rows[0]["action_obs_cosine_semantics"] == "raw_action_end_to_observation_end"
+    assert "pred_obs_cosine" not in rows[0]
