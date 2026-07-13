@@ -220,3 +220,27 @@ gpudev 上三级 chain 全部就绪:
   `839dbf6566420fa000ee75fad96b710193a0dd29`，但 baseline checkpoint
   不可达，因此 B 科学 rollout/图/CSV 仍 blocked。历史 8-episode 与
   2048-task 报告均已 superseded，不作为当前证据。
+
+### 2026-07-13 23:24 CST 更新
+
+- `wmlatnp_direct_l0p001_s0` 到 `global_step=93`，进度条
+  `93/150 [39:06:48<19:58:22]`；checkpoint 已覆盖
+  `15/30/45/60/75/90`。
+- 最新指标：latent loss `0.166`、cosine `0.834`、action/obs feature
+  variance `2.603/4.399`、peak allocated `36.288GB`，无
+  OOM/NaN/traceback。
+- 当前 run 约剩 20 小时。按当前平均约 `1261s/step` 估算，其余三个
+  direct run 加四个 eval10x 后，C 全队列尚需约 `7.5–8` 天（无中断前提）。
+- gpudev 仍 connection closed，B checkpoint staging 状态不变。
+
+### 2026-07-13 23:25 CST 用户暂停
+
+- 按用户指令停止 `wmlatnp_direct_l0p001_s0` 及整个后续串行队列。
+- 停止点 `global_step=93`；已保存 checkpoint：
+  `15/30/45/60/75/90`。日志、checkpoint、rollout artifacts 均保留。
+- 目标训练/Ray进程=0，queue进程=0；GPU2/3 已释放至 1MiB，未触碰
+  GPU0/1/4 上其他任务。
+- 暂停 marker：
+  `/mnt/SSD_8TB/zechuan/grpo_alfworld_wm/logs/wmlatnp_direct_l0p001_s0_PAUSED_BY_USER.txt`。
+- 未来若恢复，`resume_mode=auto` 将从 `global_step_90` 继续，最多重算3步；
+  当前 ETA 计时暂停。
